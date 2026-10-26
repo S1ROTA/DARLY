@@ -23,6 +23,21 @@ object AlarmStore {
    try { am.setAlarmClock(AlarmManager.AlarmClockInfo(cal.timeInMillis,PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)),pi) } catch (_:SecurityException) {return false};return true };cal.add(Calendar.DAY_OF_YEAR,1) }
   return false
  }
- fun reschedule(c:Context)=all(c).forEach{schedule(c,it)}
+ private fun prefs(c:Context)=c.getSharedPreferences("darly_snooze",0)
+ fun snoozeUntil(c:Context,id:Int):Long=prefs(c).getLong(id.toString(),0L)
+ fun setSnooze(c:Context,id:Int,until:Long){prefs(c).edit().putLong(id.toString(),until).apply()}
+ fun clearSnooze(c:Context,id:Int){setSnooze(c,id,0L)}
+ fun snoozed(c:Context):List<Pair<DAlarm,Long>> = all(c).mapNotNull { a -> val until=snoozeUntil(c,a.id);if(until>System.currentTimeMillis()) a to until else null }
+ fun cancelSnooze(c:Context,id:Int){
+  val pi=PendingIntent.getBroadcast(c,id xor 0x5A5A5A5A,Intent(c,AlarmReceiver::class.java).putExtra("id",id).putExtra("snoozed",true),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+  c.getSystemService(AlarmManager::class.java).cancel(pi);clearSnooze(c,id)
+ }
+ fun reschedule(c:Context){
+  all(c).forEach{schedule(c,it)}
+  snoozed(c).forEach{(a,until)->
+   val pi=PendingIntent.getBroadcast(c,a.id xor 0x5A5A5A5A,Intent(c,AlarmReceiver::class.java).putExtra("id",a.id).putExtra("snoozed",true),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+   try{c.getSystemService(AlarmManager::class.java).setAlarmClock(AlarmManager.AlarmClockInfo(until,PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)),pi)}catch(_:Exception){}
+  }
+ }
  fun exactPermission(c:Context){if(Build.VERSION.SDK_INT>=31 && !c.getSystemService(AlarmManager::class.java).canScheduleExactAlarms())c.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))}
 }
