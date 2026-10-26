@@ -5,6 +5,13 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.Drawable
+import android.graphics.BitmapShader
+import android.graphics.Color as AndroidColor
+import android.animation.ObjectAnimator
+import android.animation.AnimatorSet
+import android.animation.ValueAnimator
+import android.view.animation.LinearInterpolator
 import android.graphics.drawable.BitmapDrawable
 import android.util.LruCache
 import android.graphics.Typeface
@@ -27,7 +34,14 @@ object Ui {
  private val wallpaperCache=object:LruCache<Int,Bitmap>(16*1024*1024){
   override fun sizeOf(key:Int,value:Bitmap):Int=value.byteCount
  }
- fun wallpaper(c:Context):BitmapDrawable{
+ fun clearWallpaperCache(){wallpaperCache.evictAll()}
+ fun hasCustomWallpaper(c:Context)=c.getFileStreamPath("darly_custom_wallpaper.jpg").exists()
+ fun customWallpaper(c:Context):BitmapDrawable?=try{
+  val file=c.getFileStreamPath("darly_custom_wallpaper.jpg")
+  if(!file.exists())null else BitmapDrawable(c.resources,BitmapFactory.decodeFile(file.absolutePath,BitmapFactory.Options().apply{inSampleSize=2}))
+ }catch(_:Exception){null}
+ fun wallpaper(c:Context):Drawable{
+  if(theme(c)=="Своя фотография")customWallpaper(c)?.let{return it}
   val id=background(c)
   val bitmap=synchronized(wallpaperCache){
    wallpaperCache.get(id)?:BitmapFactory.decodeResource(c.resources,id,BitmapFactory.Options().apply{inScaled=false}).also{wallpaperCache.put(id,it)}
@@ -40,10 +54,31 @@ object Ui {
  var gold=0xffe3bd80.toInt()
  var muted=0xffaab9ca.toInt()
  val WHITE=0xfff4f7fc.toInt()
- fun selectedTheme(c:Context)=c.getSharedPreferences("darly",0).getString("theme","Neo Dark")?:"Neo Dark"
+ fun selectedTheme(c:Context)=c.getSharedPreferences("darly",0).getString("theme","Сезонная")?:"Сезонная"
  fun theme(c:Context):String {val t=selectedTheme(c);if(t!="Сезонная")return t;return when(Calendar.getInstance().get(Calendar.MONTH)){11,0,1->"Зима";2,3,4->"Весна";5,6,7->"Лето";else->"Осень"}}
  fun background(c:Context):Int=when(theme(c)){"Deadlock"->R.drawable.darly_deadlock;"Minecraft"->R.drawable.darly_minecraft;"Весна"->R.drawable.darly_spring;"Лето"->R.drawable.darly_summer;"Осень"->R.drawable.darly_autumn;"Зима"->R.drawable.darly_winter;else->R.drawable.darly_neo}
  fun applyTheme(c:Context){when(theme(c)){
+  "Своя фотография"->{
+   bg=0xff101724.toInt();card=0xe8172435.toInt();blue=0xff91bce8.toInt();gold=0xffe7c79e.toInt();muted=0xffbccbd7.toInt()
+   try{
+    val file=c.getFileStreamPath("darly_custom_wallpaper.jpg")
+    val options=BitmapFactory.Options().apply{inSampleSize=16}
+    val bmp=BitmapFactory.decodeFile(file.absolutePath,options)
+    if(bmp!=null){
+     val colors=mutableListOf<Int>()
+     for(y in 0 until bmp.height step 3)for(x in 0 until bmp.width step 3){
+      val px=bmp.getPixel(x,y);val hsv=FloatArray(3);Color.colorToHSV(px,hsv)
+      if(hsv[1]>.22f && hsv[2]>.25f && hsv[2]<.95f)colors.add(px)
+     }
+     if(colors.isNotEmpty()){
+      val chosen=colors[colors.size/2];val hsv=FloatArray(3);Color.colorToHSV(chosen,hsv)
+      hsv[1]=hsv[1].coerceIn(.32f,.68f);hsv[2]=.92f;blue=Color.HSVToColor(hsv)
+      hsv[2]=.16f;hsv[1]=.36f;bg=Color.HSVToColor(hsv);card=(0xe8 shl 24) or (bg and 0xffffff)
+     }
+     bmp.recycle()
+    }
+   }catch(_:Exception){}
+  }
   "Deadlock"->{bg=0xff11141b.toInt();card=0xe81b242d.toInt();blue=0xffd1a56d.toInt();gold=0xffebc38a.toInt();muted=0xffb8b8bb.toInt()}
   "Minecraft"->{bg=0xff101c18.toInt();card=0xe8192924.toInt();blue=0xff8dca9f.toInt();gold=0xffe2c486.toInt();muted=0xffabc3b8.toInt()}
   "Весна"->{bg=0xff171828.toInt();card=0xe8212437.toInt();blue=0xffb9b1ee.toInt();gold=0xffffcdb1.toInt();muted=0xffc3becf.toInt()}
@@ -52,6 +87,16 @@ object Ui {
   "Зима"->{bg=0xff10192d.toInt();card=0xe818293c.toInt();blue=0xff92bfff.toInt();gold=0xffd9e9fc.toInt();muted=0xffb6cadd.toInt()}
   else->{bg=0xff080f1b.toInt();card=0xe8172334.toInt();blue=0xff75a6ff.toInt();gold=0xffe3bd80.toInt();muted=0xffaab9ca.toInt()}
  }}
+ fun animateWallpaper(c:Context,image:android.widget.ImageView){
+  if(!c.getSharedPreferences("darly",0).getBoolean("animations",true))return
+  if(!ValueAnimator.areAnimatorsEnabled())return
+  image.scaleX=1.04f;image.scaleY=1.04f
+  image.animate().cancel()
+  image.animate().scaleX(1.10f).scaleY(1.10f).setDuration(28000L)
+   .setInterpolator(LinearInterpolator()).withEndAction{
+    if(image.isAttachedToWindow)image.animate().scaleX(1.04f).scaleY(1.04f).setDuration(28000L).start()
+   }.start()
+ }
  fun dp(c:Context,n:Int)=(n*c.resources.displayMetrics.density+.5f).toInt()
  fun shape(color:Int,r:Float=20f,stroke:Int?=null)=GradientDrawable().apply{setColor(color);cornerRadius=r;if(stroke!=null)setStroke(1,stroke)}
  fun text(c:Context,s:String,size:Float=16f,color:Int=WHITE,bold:Boolean=false)=TextView(c).apply{

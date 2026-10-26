@@ -36,6 +36,7 @@ class MainActivity:Activity(){
  private var activeStopwatch:StopwatchState?=null
  private var stopwatchClock:TextView?=null
  private var tabSwipeX=0f
+ private var backgroundPickerPending=false
  private var tabSwipeY=0f
  private val toolsTick=object:Runnable{override fun run(){
   if(!showing)return
@@ -112,6 +113,13 @@ class MainActivity:Activity(){
  }
  private fun openCurrentScreen(){if(RingService.active(this)){startActivity(Intent(this,RingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP));return};home()}
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==28&&resultCode==RESULT_OK)data?.data?.let{uri->
+   try{
+    contentResolver.openInputStream(uri)?.use{input->openFileOutput("darly_custom_wallpaper.jpg",MODE_PRIVATE).use{output->input.copyTo(output)}}
+    prefs().edit().putString("theme","Своя фотография").apply()
+    Ui.clearWallpaperCache();Ui.applyTheme(this);themes()
+   }catch(e:Exception){Toast.makeText(this,"Не удалось открыть изображение",Toast.LENGTH_LONG).show()}
+  }
   if(requestCode==17&&resultCode==RESULT_OK)data?.data?.let{uri->
    try{contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}catch(_:Exception){}
    selectedSound=uri.toString();Toast.makeText(this,"Мелодия выбрана",Toast.LENGTH_SHORT).show()
@@ -124,6 +132,9 @@ class MainActivity:Activity(){
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray){
   super.onRequestPermissionsResult(requestCode,permissions,grantResults)
   if(requestCode==3)NextAlarmNotifier.sync(this)
+ }
+ private fun chooseWallpaper(){
+  startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),28)
  }
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
@@ -140,6 +151,7 @@ class MainActivity:Activity(){
   if(Build.VERSION.SDK_INT>=29)window.isStatusBarContrastEnforced=false
   val root=FrameLayout(this)
   val image=ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@MainActivity));scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription=null}
+  Ui.animateWallpaper(this,image)
   root.addView(image,FrameLayout.LayoutParams(-1,-1))
   val shade=View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0x9507101c.toInt(),0xdd07121f.toInt(),0xf5070e1b.toInt()))}
   root.addView(shade,FrameLayout.LayoutParams(-1,-1))
@@ -166,35 +178,18 @@ class MainActivity:Activity(){
     contentDescription="Таймер и секундомер"
    }
    Ui.interactive(this,timer){timersPage()};bar.addView(timer,LinearLayout.LayoutParams(Ui.dp(this,52),Ui.dp(this,52)))
-   val gear=Ui.text(this,"⚙",27f,Ui.muted).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,43)}
-   gear.contentDescription="Настройки";Ui.interactive(this,gear){settings()};bar.addView(gear)
+
   }
   body.addView(bar);body.addView(Ui.space(this,23))
   if(which=="home"||which=="presets"||which=="settings")frame.addView(bottomNavigation(which))
-  // Retain the outgoing tab during the cross-fade instead of replacing it in one frame.
-  // This also avoids the abrupt flicker of switching the entire content view.
+  // No overlapping full-screen roots: they caused moving nav bars and jumpy status insets.
+  // Animate only opacity of the incoming content; the wallpaper never translates.
+  setContentView(root)
   val tabs=listOf("home","presets","settings")
-  val animateTabs=from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)
-  val holder=findViewById<android.view.ViewGroup>(android.R.id.content)
-  if(animateTabs && holder.childCount>0){
-   while(holder.childCount>1){
-    val stale=holder.getChildAt(0)
-    stale.animate().cancel();holder.removeView(stale)
-   }
-   val outgoing=holder.getChildAt(0)
-   outgoing.animate().cancel()
-   holder.addView(root,android.view.ViewGroup.LayoutParams(-1,-1))
-   root.alpha=0f
-   root.animate().alpha(1f).setDuration(420)
-    .setInterpolator(PathInterpolator(.22f,1f,.36f,1f)).start()
-   scroll.translationX=Ui.dp(this,if(tabs.indexOf(which)>tabs.indexOf(from))18 else -18).toFloat()
-   scroll.animate().translationX(0f).setDuration(450)
-    .setInterpolator(PathInterpolator(.22f,1f,.36f,1f)).start()
-   outgoing.animate().alpha(0f).setDuration(320)
-    .withEndAction{if(outgoing.parent===holder)holder.removeView(outgoing)}.start()
-  }else{
-   // Data refreshes never perform the navigation animation.
-   setContentView(root)
+  if(from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)){
+   scroll.alpha=0f
+   scroll.animate().alpha(1f).setDuration(260L)
+    .setInterpolator(PathInterpolator(.2f,0f,.2f,1f)).start()
   }
  }
  // Horizontal swipes switch between primary sections, without disrupting vertical scrolls.
@@ -371,7 +366,8 @@ class MainActivity:Activity(){
  }
  private fun option(label:String,view:View){body.addView(Ui.text(this,label,14f,Ui.muted));addGap(7);body.addView(view);addGap(15)}
  private fun singleEditor(a:DAlarm?){selectedSound=a?.sound?:"";setupScreen("single","Будильник",if((a?.id?:0)<=0) "Новый сигнал" else "Изменение сигнала",true)
-  val p=TimePicker(this).apply{setIs24HourView(true);hour=a?.hour?:7;minute=a?.minute?:0};body.addView(p);addGap(12)
+  val p=layoutInflater.inflate(R.layout.darly_time_picker,body,false) as TimePicker
+  p.setIs24HourView(true);p.hour=a?.hour?:7;p.minute=a?.minute?:0;body.addView(p);addGap(12)
   val title=textInput(a?.title?:"Будильник","Название");option("НАЗВАНИЕ",title)
   body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);var days=a?.days?:0;body.addView(daySelector(days){days=it});addGap(19)
   body.addView(Ui.outlineButton(this,"♪  Выбрать мелодию"){chooseSound()});addGap(16)
@@ -391,7 +387,8 @@ class MainActivity:Activity(){
  private fun seriesEditor(existing:AlarmSeries?){val source=existing?:AlarmSeries(vibrate=vibrateDefault(),snooze=snoozeDefault(),fade=fadeDefault())
   selectedSound=source.sound;setupScreen("series","Серия будильников",if((existing?.id ?: 0)>0) "Изменение расписания" else "Несколько сигналов с интервалом",true)
   val name=textInput(source.title,"Например, Работа");option("НАЗВАНИЕ СЕРИИ",name)
-  val t=TimePicker(this).apply{setIs24HourView(true);hour=source.start/60;minute=source.start%60};body.addView(Ui.text(this,"ПЕРВЫЙ СИГНАЛ",13f,Ui.muted));body.addView(t);addGap(12)
+  val t=layoutInflater.inflate(R.layout.darly_time_picker,body,false) as TimePicker
+  t.setIs24HourView(true);t.hour=source.start/60;t.minute=source.start%60;body.addView(Ui.text(this,"ПЕРВЫЙ СИГНАЛ",13f,Ui.muted));body.addView(t);addGap(12)
   var days=source.days
   body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);body.addView(daySelector(days){days=it});addGap(20)
   val intervals=listOf(5,10,15,20,30,45,60);val interval=picker(intervals,source.step){"Каждые $it мин"};option("ИНТЕРВАЛ",interval)
@@ -450,16 +447,22 @@ class MainActivity:Activity(){
    });addGap(10)
   }
   body.addView(small("На POCO / HyperOS также разреши автозапуск и работу без ограничений батареи. Иначе система может задерживать запуск будильников."));addGap(23)
-  body.addView(small("DARLY 2.7.0 · Fluid Motion"))
+  body.addView(small("DARLY 2.8.0 · Ambient Edition"))
  }
- private fun themes(){setupScreen("themes","Оформление","Реалистичные пейзажи и авторские игровые арты",true)
+ private fun themes(){setupScreen("themes","Оформление","Сезоны и собственные фотографии",true)
+  body.addView(Ui.button(this,"＋  Выбрать фотографию из галереи"){chooseWallpaper()});addGap(13)
+  body.addView(small("Цвет элементов автоматически подбирается к фотографии. Изображение хранится только на устройстве."));addGap(18)
   val selected=Ui.selectedTheme(this)
-  listOf("Neo Dark","Deadlock","Minecraft","Сезонная","Весна","Лето","Осень","Зима").forEach{name->
+  listOf("Сезонная","Весна","Лето","Осень","Зима","Своя фотография").forEach{name->
+   if(name=="Своя фотография"&&!Ui.hasCustomWallpaper(this))return@forEach
    val c=Ui.card(this)
-   val image=ImageView(this).apply{setImageResource(when(name){"Deadlock"->R.drawable.darly_deadlock;"Minecraft"->R.drawable.darly_minecraft;"Весна"->R.drawable.darly_spring;"Лето"->R.drawable.darly_summer;"Осень"->R.drawable.darly_autumn;"Зима"->R.drawable.darly_winter;"Сезонная"->Ui.background(this@MainActivity);else->R.drawable.darly_neo});scaleType=ImageView.ScaleType.CENTER_CROP}
-   c.addView(image,LinearLayout.LayoutParams(-1,Ui.dp(this,165)));c.addView(Ui.space(this,12))
-   c.addView(Ui.text(this,(if(name==selected) "✓  " else "")+name,18f,Ui.WHITE,true))
-   c.addView(Ui.space(this,5));c.addView(small(when(name){"Neo Dark"->"Ночной город · неон";"Deadlock"->"Атмосферный городской арт";"Minecraft"->"Игровой арт · блочный мир";"Сезонная"->"Пейзаж сменяется автоматически по времени года";else->"Кинематографичный сезонный пейзаж"}))
+   val preview=ImageView(this).apply{
+    setImageDrawable(if(name=="Своя фотография")Ui.customWallpaper(this@MainActivity) else resources.getDrawable(when(name){
+     "Весна"->R.drawable.darly_spring;"Лето"->R.drawable.darly_summer;"Осень"->R.drawable.darly_autumn;"Зима"->R.drawable.darly_winter;else->Ui.background(this@MainActivity)
+    },theme));scaleType=ImageView.ScaleType.CENTER_CROP
+   }
+   c.addView(preview,LinearLayout.LayoutParams(-1,Ui.dp(this,155)));c.addView(Ui.space(this,12))
+   c.addView(Ui.text(this,(if(name==selected)"✓  " else "")+name,18f,Ui.WHITE,true))
    Ui.interactive(this,c){prefs().edit().putString("theme",name).apply();Ui.applyTheme(this);themes()}
    body.addView(c);addGap()
   }

@@ -1,6 +1,8 @@
 package com.darly.alarm
 
 import android.app.Activity
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.content.Intent
 import android.graphics.drawable.GradientDrawable
@@ -45,7 +47,7 @@ class RingActivity:Activity(){
   window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
   if(Build.VERSION.SDK_INT>=29)window.isStatusBarContrastEnforced=false
   val root=FrameLayout(this)
-  root.addView(ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP},FrameLayout.LayoutParams(-1,-1))
+  root.addView(ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP;Ui.animateWallpaper(this@RingActivity,this)},FrameLayout.LayoutParams(-1,-1))
   root.addView(View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xb30b1220.toInt(),0xc70a1525.toInt(),0xf508101b.toInt()))},FrameLayout.LayoutParams(-1,-1))
   val content=Ui.column(this).apply{gravity=Gravity.CENTER;Ui.pad(this@RingActivity,this,28,30)}
   root.addView(content,FrameLayout.LayoutParams(-1,-1))
@@ -54,7 +56,10 @@ class RingActivity:Activity(){
   val id=RingService.activeId(this)
   val alarm=AlarmStore.all(this).firstOrNull{it.id==id}
   val heading=Ui.text(this,"DARLY  /  СИГНАЛ",14f,Ui.gold,true).apply{gravity=Gravity.CENTER}
-  content.addView(heading);content.addView(Ui.space(this,34))
+  content.addView(heading);content.addView(Ui.space(this,22))
+  val pulse=Ui.text(this,"◉",46f,Ui.gold,true).apply{gravity=Gravity.CENTER;contentDescription="Звонит будильник"}
+  content.addView(pulse);content.addView(Ui.space(this,12))
+  if(ValueAnimator.areAnimatorsEnabled())ObjectAnimator.ofFloat(pulse,View.ALPHA,.55f,1f).apply{duration=900L;repeatCount=ValueAnimator.INFINITE;repeatMode=ValueAnimator.REVERSE;start()}
   val clock=Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),77f,Ui.WHITE,true).apply{gravity=Gravity.CENTER}
   content.addView(clock);content.addView(Ui.space(this,12))
   content.addView(Ui.text(this,alarm?.title?:"Будильник",24f,Ui.WHITE,true).apply{gravity=Gravity.CENTER});content.addView(Ui.space(this,18))
