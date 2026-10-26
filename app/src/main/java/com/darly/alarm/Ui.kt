@@ -7,6 +7,9 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
+import android.view.SoundEffectConstants
+import android.view.animation.DecelerateInterpolator
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -43,16 +46,21 @@ object Ui {
  fun row(c:Context)=LinearLayout(c).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
  fun space(c:Context,h:Int)=View(c).apply{layoutParams=LinearLayout.LayoutParams(1,dp(c,h))}
  fun pad(c:Context,v:View,x:Int=18,y:Int=16){v.setPadding(dp(c,x),dp(c,y),dp(c,x),dp(c,y))}
+ fun feedback(c:Context,v:View){
+  val p=c.getSharedPreferences("darly",0)
+  if(p.getBoolean("sound_buttons",true))v.playSoundEffect(SoundEffectConstants.CLICK)
+  if(p.getBoolean("haptic_buttons",true))v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+ }
  fun interactive(c:Context,v:View,action:()->Unit){
   v.isClickable=true;v.isFocusable=true
   v.setOnTouchListener{view,event->
    if(c.getSharedPreferences("darly",0).getBoolean("animations",true))when(event.actionMasked){
-    MotionEvent.ACTION_DOWN->view.animate().scaleX(.975f).scaleY(.975f).setDuration(90).start()
-    MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->view.animate().scaleX(1f).scaleY(1f).setDuration(155).start()
+    MotionEvent.ACTION_DOWN->view.animate().scaleX(.965f).scaleY(.965f).setDuration(95).setInterpolator(DecelerateInterpolator()).start()
+    MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->view.animate().scaleX(1f).scaleY(1f).setDuration(190).setInterpolator(DecelerateInterpolator()).start()
    }
    false
   }
-  v.setOnClickListener{action()}
+  v.setOnClickListener{feedback(c,v);action()}
  }
  fun button(c:Context,s:String,action:()->Unit)=text(c,s,15f,0xff08111f.toInt(),true).apply{
   gravity=Gravity.CENTER;background=shape(blue,dp(c,17).toFloat());setPadding(dp(c,17),dp(c,15),dp(c,17),dp(c,15));minHeight=dp(c,51)
@@ -66,6 +74,7 @@ object Ui {
   background=shape(card,dp(c,20).toFloat(),0x4d7d91ac);elevation=dp(c,3).toFloat();pad(c,this,17,17)
  }
  fun switch(c:Context,on:Boolean)=Switch(c).apply{
+  setOnTouchListener{v,event->if(event.actionMasked==MotionEvent.ACTION_UP)feedback(c,v);false}
   isChecked=on;thumbTintList=ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked),intArrayOf()),intArrayOf(blue,muted))
   trackTintList=ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked),intArrayOf()),intArrayOf(0xff375a78.toInt(),0xff344054.toInt()))
  }

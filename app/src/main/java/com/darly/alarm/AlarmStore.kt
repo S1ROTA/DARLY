@@ -14,7 +14,7 @@ object AlarmStore {
  const val ACTION_CHANGED="com.darly.alarm.ALARMS_CHANGED"
  fun notifyChanged(c:Context){c.sendBroadcast(Intent(ACTION_CHANGED).setPackage(c.packageName))}
  fun all(c:Context):List<DAlarm> = try { val arr=JSONArray(c.getSharedPreferences("darly",0).getString(KEY,"[]")); (0 until arr.length()).map { val j=arr.getJSONObject(it); DAlarm(j.getInt("id"),j.getInt("h"),j.getInt("m"),j.getInt("days"),j.optString("sound"),j.optBoolean("enabled",true),j.optString("title","Будильник"),j.optBoolean("vibrate",true),j.optInt("snooze",5),j.optInt("fade",30),j.optInt("groupId",0),j.optInt("seriesIndex",0)) } } catch (_:Exception) { emptyList() }
- fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade).put("groupId",it.groupId).put("seriesIndex",it.seriesIndex)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply();notifyChanged(c) }
+ fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade).put("groupId",it.groupId).put("seriesIndex",it.seriesIndex)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply();notifyChanged(c);NextAlarmNotifier.sync(c) }
  fun schedule(c:Context,a:DAlarm):Boolean {
   val am=c.getSystemService(AlarmManager::class.java)
   val pi=PendingIntent.getBroadcast(c,a.id,Intent(c,AlarmReceiver::class.java).putExtra("id",a.id),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -52,6 +52,7 @@ object AlarmStore {
  }
  fun reschedule(c:Context){
   all(c).forEach{schedule(c,it)}
+  NextAlarmNotifier.sync(c)
   snoozed(c).forEach{(a,until)->
    val pi=PendingIntent.getBroadcast(c,a.id xor 0x5A5A5A5A,Intent(c,AlarmReceiver::class.java).putExtra("id",a.id).putExtra("snoozed",true),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
    try{c.getSystemService(AlarmManager::class.java).setAlarmClock(AlarmManager.AlarmClockInfo(until,PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)),pi)}catch(_:Exception){}

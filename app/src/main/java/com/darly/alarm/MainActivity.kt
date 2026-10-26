@@ -2,7 +2,6 @@ package com.darly.alarm
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.AlarmManager
 import android.content.*
 import android.graphics.Color
@@ -10,6 +9,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.*
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.View
 import android.view.WindowInsets
 import android.widget.*
@@ -22,6 +24,23 @@ class MainActivity:Activity(){
  private var selectedSound=""
  private var clockView:TextView?=null
  private var showing=false
+ private var choosing=false
+ private var selectionButton:TextView?=null
+ private val selectedAlarms=linkedSetOf<Int>()
+ private val selectedSeries=linkedSetOf<Int>()
+ private val timerLabels=mutableMapOf<Int,TextView>()
+ private var currentTimers:List<DTimer> = emptyList()
+ private var activeStopwatch:StopwatchState?=null
+ private var stopwatchClock:TextView?=null
+ private var tabSwipeX=0f
+ private var tabSwipeY=0f
+ private val toolsTick=object:Runnable{override fun run(){
+  if(!showing)return
+  when(screen){
+   "timers"->{currentTimers.forEach{t->timerLabels[t.id]?.text=duration(t.remaining())};handler.postDelayed(this,450)}
+   "stopwatch"->{stopwatchClock?.text=duration((activeStopwatch?.elapsed()?:0L),true);handler.postDelayed(this,90)}
+  }
+ }}
  private var lastPermission:Boolean?=null
  private val handler=Handler(Looper.getMainLooper())
  private val clockTick=object:Runnable{override fun run(){
@@ -30,10 +49,10 @@ class MainActivity:Activity(){
    handler.postDelayed(this,60000-(System.currentTimeMillis()%60000))
   }
  }}
- private val refresh=Runnable{if(screen=="home")home()}
+ private val refresh=Runnable{when(screen){"home"->home();"timers"->timersPage()}}
  private val changes=object:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){
   if(RingService.active(this@MainActivity)){openCurrentScreen();return}
-  if(screen=="home"){handler.removeCallbacks(refresh);handler.postDelayed(refresh,100)}
+  if(screen=="home"||screen=="timers"){handler.removeCallbacks(refresh);handler.postDelayed(refresh,100)}
  }}
  private var registered=false
  /** On Android 13+ app-only events must be registered as non-exported. */
@@ -59,18 +78,21 @@ class MainActivity:Activity(){
  override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
   if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),3)
-  openCurrentScreen()
+  NextAlarmNotifier.sync(this)
+  if(intent.getStringExtra("open_tools")=="timers")timersPage() else openCurrentScreen()
  }
  override fun onResume(){super.onResume();showing=true
   if(!registered)registerChangesReceiver()
-  handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh)
+  handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
   val allowed=Build.VERSION.SDK_INT<31 || getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
   if(allowed && lastPermission==false)AlarmStore.reschedule(this)
   lastPermission=allowed
-  if(RingService.active(this))openCurrentScreen()else if(screen=="home")home()
-  // home() already arms a single minute-boundary clock callback.
+  if(RingService.active(this))openCurrentScreen()else when(screen){
+   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage()
+  }
+  NextAlarmNotifier.sync(this)
  }
- override fun onPause(){showing=false;handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh)
+ override fun onPause(){showing=false;handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
   if(registered){unregisterReceiver(changes);registered=false}
   super.onPause()
  }
@@ -81,11 +103,25 @@ class MainActivity:Activity(){
    selectedSound=uri.toString();Toast.makeText(this,"Мелодия выбрана",Toast.LENGTH_SHORT).show()
   }
  }
+ override fun onNewIntent(intent:Intent){super.onNewIntent(intent)
+  setIntent(intent)
+  if(intent.getStringExtra("open_tools")=="timers")timersPage()
+ }
+ override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray){
+  super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+  if(requestCode==3)NextAlarmNotifier.sync(this)
+ }
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
-  screen=which;clockView=null;handler.removeCallbacks(clockTick);Ui.applyTheme(this)
-  window.statusBarColor=Ui.bg;window.navigationBarColor=Ui.bg
-  window.decorView.systemUiVisibility=0
+  val from=screen
+  selectionButton=null
+  screen=which;clockView=null;handler.removeCallbacks(clockTick);handler.removeCallbacks(toolsTick);timerLabels.clear();stopwatchClock=null;Ui.applyTheme(this)
+  // Edge-to-edge: wallpaper is drawn beneath the transparent status bar.
+  window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+  window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+  window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Ui.bg
+  window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+  if(Build.VERSION.SDK_INT>=29)window.isStatusBarContrastEnforced=false
   val root=FrameLayout(this)
   val image=ImageView(this).apply{setImageResource(Ui.background(this@MainActivity));scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription=null}
   root.addView(image,FrameLayout.LayoutParams(-1,-1))
@@ -93,22 +129,49 @@ class MainActivity:Activity(){
   root.addView(shade,FrameLayout.LayoutParams(-1,-1))
   val frame=Ui.column(this)
   root.addView(frame,FrameLayout.LayoutParams(-1,-1))
-  if(Build.VERSION.SDK_INT>=30){root.setOnApplyWindowInsetsListener{v,insets->val b=insets.getInsets(WindowInsets.Type.systemBars());v.setPadding(0,b.top,0,b.bottom);insets}}
-  else root.fitsSystemWindows=true
+  if(Build.VERSION.SDK_INT>=30){root.setOnApplyWindowInsetsListener{_,insets->val b=insets.getInsets(WindowInsets.Type.systemBars());frame.setPadding(0,b.top,0,b.bottom);insets}}
+  else frame.fitsSystemWindows=true
   val scroll=ScrollView(this).apply{isFillViewport=false;isVerticalScrollBarEnabled=false;clipToPadding=false}
   body=Ui.column(this);Ui.pad(this,body,19,16);body.setPadding(body.paddingLeft,body.paddingTop,body.paddingRight,Ui.dp(this,34))
   scroll.addView(body);frame.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val bar=Ui.row(this)
   if(back){val prev=Ui.text(this,"‹",35f,Ui.WHITE,true)
-   prev.setPadding(0,0,Ui.dp(this,18),0);Ui.interactive(this,prev){home()};bar.addView(prev)}
+   prev.setPadding(0,0,Ui.dp(this,18),0);Ui.interactive(this,prev){when(which){"stopwatch","timer_editor"->timersPage();"themes"->settings();else->home()}};bar.addView(prev)}
   val heading=Ui.column(this);heading.addView(Ui.text(this,title,if(back)23f else 25f,Ui.WHITE,true))
   if(subtitle.isNotBlank()){heading.addView(Ui.space(this,4));heading.addView(Ui.text(this,subtitle,12f,Ui.muted))}
   bar.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
-  if(!back){val gear=Ui.text(this,"⚙",27f,Ui.muted).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,46)}
-   gear.contentDescription="Настройки";Ui.interactive(this,gear){settings()};bar.addView(gear)}
+  if(!back){
+   val timer=Ui.text(this,"◴",28f,Ui.muted,true).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,43);contentDescription="Таймер и секундомер"}
+   Ui.interactive(this,timer){timersPage()};bar.addView(timer)
+   val gear=Ui.text(this,"⚙",27f,Ui.muted).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,43)}
+   gear.contentDescription="Настройки";Ui.interactive(this,gear){settings()};bar.addView(gear)
+  }
   body.addView(bar);body.addView(Ui.space(this,23))
   if(which=="home"||which=="presets"||which=="settings")frame.addView(bottomNavigation(which))
   setContentView(root)
+  // Lightweight tab transition; only on actual navigation, not live list updates.
+  val tabs=listOf("home","presets","settings")
+  if(from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)){
+   root.alpha=0.7f
+   root.translationX=Ui.dp(this,if(tabs.indexOf(which)>tabs.indexOf(from))28 else -28).toFloat()
+   root.animate().alpha(1f).translationX(0f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
+  }
+ }
+ // Horizontal swipes switch between primary sections, without disrupting vertical scrolls.
+ override fun dispatchTouchEvent(ev:MotionEvent):Boolean{
+  if(ev.actionMasked==MotionEvent.ACTION_DOWN){tabSwipeX=ev.x;tabSwipeY=ev.y}
+  if(ev.actionMasked==MotionEvent.ACTION_UP&&screen in listOf("home","presets","settings")){
+   val dx=ev.x-tabSwipeX;val dy=ev.y-tabSwipeY
+   if(kotlin.math.abs(dx)>Ui.dp(this,115)&&kotlin.math.abs(dy)<Ui.dp(this,85)){
+    val cancel=MotionEvent.obtain(ev);cancel.action=MotionEvent.ACTION_CANCEL
+    super.dispatchTouchEvent(cancel);cancel.recycle()
+    val list=listOf("home","presets","settings");val index=list.indexOf(screen)
+    val target=(index+if(dx<0)1 else -1).coerceIn(0,2)
+    if(target!=index)when(target){0->home();1->presets();2->settings()}
+    return true
+   }
+  }
+  return super.dispatchTouchEvent(ev)
  }
  private fun bottomNavigation(active:String):LinearLayout{
   val nav=Ui.row(this).apply{setBackgroundColor(0xf209111e.toInt());setPadding(Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8),Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8))}
@@ -125,6 +188,22 @@ class MainActivity:Activity(){
  private fun small(s:String)=Ui.text(this,s,12f,Ui.muted)
  private fun daysLabel(mask:Int):String{if(mask==0)return "Однократно";if(mask==127)return "Ежедневно";if(mask==31)return "Пн–Пт";if(mask==96)return "Сб–Вс";val letters=listOf("Пн","Вт","Ср","Чт","Пт","Сб","Вс");return letters.filterIndexed{i,_->(mask and (1 shl i))!=0}.joinToString(" · ")}
  private fun time(m:Int)="%02d:%02d".format(m/60,m%60)
+ private fun duration(ms:Long,centis:Boolean=false):String=TimerMath.format(ms,centis)
+ private fun updateSelectionButton(){
+  val count=selectedAlarms.size+selectedSeries.size
+  selectionButton?.text="Удалить выбранные ($count)"
+ }
+ private fun resetSelection(){choosing=false;selectedAlarms.clear();selectedSeries.clear();selectionButton=null}
+ private fun deleteSelection(all:Boolean){
+  val series=if(all)SeriesStore.all(this).map{it.id}.toSet()else selectedSeries.toSet()
+  val alarms=if(all)AlarmStore.all(this).map{it.id}.toSet()else selectedAlarms.toSet()
+  series.forEach{SeriesStore.delete(this,it)}
+  val singles=AlarmStore.all(this)
+  singles.filter{it.id in alarms}.forEach{AlarmStore.cancel(this,it)}
+  if(alarms.isNotEmpty())AlarmStore.save(this,singles.filterNot{it.id in alarms})
+  resetSelection();home()
+ }
+ private fun selectButton(label:String,onClick:()->Unit)=Ui.outlineButton(this,label,onClick)
  private fun addGap(h:Int=13){body.addView(Ui.space(this,h))}
  private fun home(){setupScreen("home","DARLY","Твой ритм. Твоё утро.")
   if(showing)handler.post(clockTick)
@@ -147,6 +226,23 @@ class MainActivity:Activity(){
   }
   val r=Ui.row(this);r.addView(Ui.button(this,"＋ Будильник"){singleEditor(null)},LinearLayout.LayoutParams(0,-2,1f));r.addView(Ui.space(this,10));r.addView(Ui.outlineButton(this,"＋ Серия"){seriesEditor(null)},LinearLayout.LayoutParams(0,-2,1f));body.addView(r);addGap(26)
   val groups=SeriesStore.all(this)
+  if(groups.isNotEmpty()||all.isNotEmpty()){
+   val manage=Ui.row(this)
+   manage.addView(selectButton(if(choosing)"Готово" else "☑ Выбрать"){
+    if(choosing)resetSelection()else choosing=true
+    home()
+   },LinearLayout.LayoutParams(0,-2,1f))
+   manage.addView(Ui.space(this,8))
+   manage.addView(selectButton("Удалить все"){deleteSelection(true)},LinearLayout.LayoutParams(0,-2,1f))
+   body.addView(manage);addGap(12)
+   if(choosing){
+    val selected=selectedSeries.size+selectedAlarms.size
+    selectionButton=Ui.button(this,"Удалить выбранные ($selected)"){
+     if(selectedAlarms.isNotEmpty()||selectedSeries.isNotEmpty())deleteSelection(false)
+    }
+    body.addView(selectionButton!!);addGap(15)
+   }
+  }
   if(groups.isNotEmpty()){section("Серии", "${groups.size}");groups.forEach{seriesCard(it);addGap()};addGap(12)}
   val singles=all.filter{it.groupId==0}.sortedWith(compareBy({it.hour},{it.minute}))
   section("Отдельные будильники","${singles.size}")
@@ -158,8 +254,12 @@ class MainActivity:Activity(){
   info.addView(Ui.text(this,s.title,19f,Ui.WHITE,true));info.addView(Ui.space(this,5))
   info.addView(Ui.text(this,"${s.labelAt(0)} — ${s.labelAt(s.count-1)}",23f,Ui.gold,true));info.addView(Ui.space(this,5))
   info.addView(small("${s.count} сигналов · каждые ${s.step} мин · ${daysLabel(s.days)}"))
-  top.addView(info,LinearLayout.LayoutParams(0,-2,1f));val toggle=Ui.switch(this,s.enabled);toggle.setOnCheckedChangeListener{_,on->SeriesStore.toggle(this,s.id,on);home()};top.addView(toggle);c.addView(top);c.addView(Ui.space(this,14));c.addView(Ui.divider(this));c.addView(Ui.space(this,12))
-  val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Настроить"){seriesEditor(s)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){confirm("Удалить серию?","Все ${s.count} будильников серии будут удалены."){SeriesStore.delete(this,s.id);home()}},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)
+  top.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+  if(choosing){val box=CheckBox(this).apply{isChecked=s.id in selectedSeries;contentDescription="Выбрать серию ${s.title}"}
+   box.setOnCheckedChangeListener{_,on->if(on)selectedSeries.add(s.id)else selectedSeries.remove(s.id);updateSelectionButton()};top.addView(box)
+   Ui.interactive(this,c){box.isChecked=!box.isChecked}
+  }else { val toggle=Ui.switch(this,s.enabled);toggle.setOnCheckedChangeListener{_,on->SeriesStore.toggle(this,s.id,on);home()};top.addView(toggle) };c.addView(top);c.addView(Ui.space(this,14));c.addView(Ui.divider(this));c.addView(Ui.space(this,12))
+  if(!choosing){val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Настроить"){seriesEditor(s)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){SeriesStore.delete(this,s.id);home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
   val disclosure=Ui.text(this,"Показать расписание  ↓",13f,Ui.blue,true)
   disclosure.setPadding(0,Ui.dp(this,12),0,0);val preview=Ui.column(this)
   Ui.interactive(this,disclosure){if(preview.childCount>0){preview.removeAllViews();disclosure.text="Показать расписание  ↓"}else{
@@ -169,10 +269,14 @@ class MainActivity:Activity(){
  }
  private fun singleCard(a:DAlarm){val c=Ui.card(this);val top=Ui.row(this);val info=Ui.column(this)
   info.addView(Ui.text(this,"%02d:%02d".format(a.hour,a.minute),30f,if(a.enabled)Ui.WHITE else Ui.muted,true));info.addView(Ui.space(this,3));info.addView(Ui.text(this,a.title,14f,Ui.gold,true));info.addView(Ui.space(this,5));info.addView(small(daysLabel(a.days)))
-  top.addView(info,LinearLayout.LayoutParams(0,-2,1f));val toggle=Ui.switch(this,a.enabled);toggle.setOnCheckedChangeListener{_,enabled->val updated=a.copy(enabled=enabled);AlarmStore.save(this,AlarmStore.all(this).map{if(it.id==a.id)updated else it});AlarmStore.schedule(this,updated);home()};top.addView(toggle);c.addView(top)
-  c.addView(Ui.space(this,13));val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Изменить"){singleEditor(a)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){confirm("Удалить будильник?",a.title){AlarmStore.cancel(this,a);AlarmStore.save(this,AlarmStore.all(this).filter{it.id!=a.id});home()}},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions);body.addView(c)
+  top.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+  if(choosing){val box=CheckBox(this).apply{isChecked=a.id in selectedAlarms;contentDescription="Выбрать ${a.title}"}
+   box.setOnCheckedChangeListener{_,on->if(on)selectedAlarms.add(a.id)else selectedAlarms.remove(a.id);updateSelectionButton()};top.addView(box)
+   Ui.interactive(this,c){box.isChecked=!box.isChecked}
+  }else { val toggle=Ui.switch(this,a.enabled);toggle.setOnCheckedChangeListener{_,enabled->val updated=a.copy(enabled=enabled);AlarmStore.save(this,AlarmStore.all(this).map{if(it.id==a.id)updated else it});AlarmStore.schedule(this,updated);home()};top.addView(toggle) };c.addView(top)
+  if(!choosing){c.addView(Ui.space(this,13));val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Изменить"){singleEditor(a)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){AlarmStore.cancel(this,a);AlarmStore.save(this,AlarmStore.all(this).filter{it.id!=a.id});home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
+  body.addView(c)
  }
- private fun confirm(title:String,bodyText:String,yes:()->Unit){AlertDialog.Builder(this).setTitle(title).setMessage(bodyText).setNegativeButton("Отмена",null).setPositiveButton("Удалить"){_,_->yes()}.show()}
  private fun daySelector(initial:Int,onChange:(Int)->Unit):LinearLayout{
   var mask=initial;val row=Ui.row(this);val labels=listOf("Пн","Вт","Ср","Чт","Пт","Сб","Вс")
   labels.forEachIndexed{i,t->val view=Ui.text(this,t,12f,Ui.WHITE,true).apply{gravity=Gravity.CENTER;minHeight=Ui.dp(this@MainActivity,41)}
@@ -259,6 +363,8 @@ class MainActivity:Activity(){
  private fun settings(){setupScreen("settings","Настройки","Вид, звук и поведение приложения")
   section("Внешний вид");body.addView(Ui.button(this,"Выбрать тему оформления  ›"){themes()});addGap(12)
   val animation=Ui.switch(this,prefs().getBoolean("animations",true));val a=Ui.row(this);a.addView(Ui.text(this,"Анимация кнопок",15f),LinearLayout.LayoutParams(0,-2,1f));animation.setOnCheckedChangeListener{_,v->prefs().edit().putBoolean("animations",v).apply()};a.addView(animation);body.addView(a);addGap(22)
+  val sounds=Ui.switch(this,prefs().getBoolean("sound_buttons",true));val sr=Ui.row(this);sr.addView(Ui.text(this,"Звук нажатий",15f),LinearLayout.LayoutParams(0,-2,1f));sounds.setOnCheckedChangeListener{_,on->prefs().edit().putBoolean("sound_buttons",on).apply()};sr.addView(sounds);body.addView(sr);addGap(13)
+  val haptics=Ui.switch(this,prefs().getBoolean("haptic_buttons",true));val hr=Ui.row(this);hr.addView(Ui.text(this,"Лёгкая вибрация нажатий",15f),LinearLayout.LayoutParams(0,-2,1f));haptics.setOnCheckedChangeListener{_,on->prefs().edit().putBoolean("haptic_buttons",on).apply()};hr.addView(haptics);body.addView(hr);addGap(22)
   section("Новые будильники")
   val vibration=Ui.switch(this,vibrateDefault());val vr=Ui.row(this);vr.addView(Ui.text(this,"Вибрация",15f),LinearLayout.LayoutParams(0,-2,1f));vibration.setOnCheckedChangeListener{_,v->prefs().edit().putBoolean("default_vibrate",v).apply()};vr.addView(vibration);body.addView(vr);addGap(13)
   val snoozes=listOf(1,5,10,15,20,30);val snooze=picker(snoozes,snoozeDefault()){ "$it мин" };option("ИНТЕРВАЛ ПОВТОРА",snooze)
@@ -276,7 +382,7 @@ class MainActivity:Activity(){
    });addGap(10)
   }
   body.addView(small("На POCO / HyperOS также разреши автозапуск и работу без ограничений батареи. Иначе система может задерживать запуск будильников."));addGap(23)
-  body.addView(small("DARLY 2.5.0 · Cinematic Edition"))
+  body.addView(small("DARLY 2.6.0 · Time Suite"))
  }
  private fun themes(){setupScreen("themes","Оформление","Реалистичные пейзажи и авторские игровые арты",true)
   val selected=Ui.selectedTheme(this)
@@ -290,5 +396,107 @@ class MainActivity:Activity(){
    body.addView(c);addGap()
   }
  }
- override fun onBackPressed(){home()}
+ private fun toolsHeader(active:String){
+  val row=Ui.row(this)
+  val timers=if(active=="timers")Ui.button(this,"Таймеры"){if(active!="timers")timersPage()}
+             else Ui.outlineButton(this,"Таймеры"){timersPage()}
+  row.addView(timers,LinearLayout.LayoutParams(0,-2,1f))
+  row.addView(Ui.space(this,9))
+  val watch=if(active=="stopwatch")Ui.button(this,"Секундомер"){if(active!="stopwatch")stopwatchPage()}
+            else Ui.outlineButton(this,"Секундомер"){stopwatchPage()}
+  row.addView(watch,LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(row);addGap(22)
+ }
+ private fun timersPage(){setupScreen("timers","Время","Несколько независимых таймеров",true)
+  toolsHeader("timers")
+  body.addView(Ui.button(this,"＋ Новый таймер"){timerEditor()});addGap(21)
+  val list=TimerStore.all(this).sortedBy{it.id};currentTimers=list
+  section("Мои таймеры","${list.size}")
+  if(list.isEmpty()){val c=Ui.card(this);c.addView(Ui.text(this,"Добавь первый таймер",17f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(small("Каждый таймер работает независимо, даже когда приложение закрыто."));body.addView(c)}
+  list.forEach{t->
+   val card=Ui.card(this)
+   card.addView(Ui.text(this,t.title,17f,Ui.WHITE,true));card.addView(Ui.space(this,11))
+   val label=Ui.text(this,duration(t.remaining()),35f,if(t.running)Ui.blue else Ui.WHITE,true)
+   timerLabels[t.id]=label;card.addView(label);card.addView(Ui.space(this,14))
+   val row=Ui.row(this)
+   row.addView(Ui.button(this,if(t.running)"Пауза" else "Старт"){
+    if(t.running)TimerStore.pause(this,t.id)else if(!TimerStore.start(this,t.id)){
+     AlarmStore.exactPermission(this);Toast.makeText(this,"Нужен доступ к точным будильникам",Toast.LENGTH_LONG).show()
+    };timersPage()
+   },LinearLayout.LayoutParams(0,-2,1f))
+   row.addView(Ui.space(this,7))
+   row.addView(Ui.outlineButton(this,"Сброс"){
+    TimerStore.reset(this,t.id);timersPage()
+   },LinearLayout.LayoutParams(0,-2,1f))
+   card.addView(row);card.addView(Ui.space(this,10))
+   val extra=Ui.row(this)
+   extra.addView(Ui.outlineButton(this,"＋1 мин"){
+    TimerStore.addTime(this,t.id,60000);timersPage()
+   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.space(this,7))
+   extra.addView(Ui.outlineButton(this,"＋5 мин"){
+    TimerStore.addTime(this,t.id,300000);timersPage()
+   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.space(this,7))
+   extra.addView(Ui.outlineButton(this,"Удалить"){
+    TimerStore.delete(this,t.id);timersPage()
+   },LinearLayout.LayoutParams(0,-2,1f))
+   card.addView(extra);body.addView(card);addGap(13)
+  }
+  if(showing&&list.any{it.running})handler.post(toolsTick)
+ }
+ private fun timerEditor(){setupScreen("timer_editor","Новый таймер","Быстрая настройка времени",true)
+  val name=textInput("","Например, Чай или тренировка");option("НАЗВАНИЕ",name)
+  var total=5L*60000L
+  val display=Ui.text(this,duration(total),43f,Ui.WHITE,true).apply{gravity=Gravity.CENTER}
+  body.addView(display);addGap(22)
+  val quick=listOf(0L to "＋10 сек",1L to "＋1 мин",5L to "＋5 мин",10L to "＋10 мин",30L to "＋30 мин",60L to "＋1 час")
+  quick.chunked(2).forEach{group->val row=Ui.row(this)
+   group.forEach{(minutes,label)->val b=Ui.outlineButton(this,label){val extra=if(minutes==0L)10000L else minutes*60000L;total=(total+extra).coerceAtMost(7*24*3600000L);display.text=duration(total)}
+    row.addView(b,LinearLayout.LayoutParams(0,-2,1f));row.addView(Ui.space(this,9))}
+   body.addView(row);addGap(9)
+  }
+  val row=Ui.row(this)
+  row.addView(Ui.outlineButton(this,"−1 мин"){total=(total-60000).coerceAtLeast(0L);display.text=duration(total)},LinearLayout.LayoutParams(0,-2,1f))
+  row.addView(Ui.space(this,9));row.addView(Ui.outlineButton(this,"Обнулить"){total=0;display.text=duration(total)},LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(row);addGap(21)
+  body.addView(Ui.button(this,"Создать и запустить"){
+   if(total==0L){Toast.makeText(this,"Добавь время",Toast.LENGTH_SHORT).show();return@button}
+   val ok=TimerStore.create(this,name.text.toString(),total)
+   if(!ok){AlarmStore.exactPermission(this);Toast.makeText(this,"Разреши точные будильники, затем запусти таймер",Toast.LENGTH_LONG).show()}
+   timersPage()
+  })
+ }
+ private fun stopwatchPage(){setupScreen("stopwatch","Секундомер","Стоп записывает результат и продолжает отсчёт",true)
+  toolsHeader("stopwatch")
+  val s=StopwatchStore.get(this);activeStopwatch=s
+  val hero=Ui.card(this)
+  val clock=Ui.text(this,duration(s.elapsed(),true),38f,Ui.WHITE,true).apply{gravity=Gravity.CENTER}
+  stopwatchClock=clock;hero.addView(clock);hero.addView(Ui.space(this,14))
+  hero.addView(Ui.text(this,if(s.running)"Идёт отсчёт" else if(s.accrued>0)"Пауза" else "Готов к старту",13f,Ui.muted).apply{gravity=Gravity.CENTER})
+  body.addView(hero);addGap(17)
+  val controls=Ui.row(this)
+  controls.addView(Ui.button(this,if(s.running)"Стоп · записать" else "Старт"){
+   if(s.running)StopwatchStore.stop(this)else StopwatchStore.start(this)
+   stopwatchPage()
+  },LinearLayout.LayoutParams(0,-2,1.25f));controls.addView(Ui.space(this,7))
+  if(s.running||s.accrued>0L)controls.addView(Ui.outlineButton(this,if(s.running)"Пауза" else "Продолжить"){
+   if(s.running)StopwatchStore.pause(this)else StopwatchStore.start(this)
+   stopwatchPage()
+  },LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(controls);addGap(10)
+  body.addView(Ui.outlineButton(this,"Сбросить секундомер и результаты"){
+   StopwatchStore.reset(this);stopwatchPage()
+  });addGap(25)
+  section("Результаты","${s.marks.size}")
+  if(s.marks.isEmpty())body.addView(small("Нажимай «Стоп», чтобы сохранить результат. Отсчёт при этом продолжается."))
+  s.marks.withIndex().reversed().forEach{(index,elapsed)->
+   val previous=if(index==0)0L else s.marks[index-1]
+   val card=Ui.card(this);val row=Ui.row(this)
+   row.addView(Ui.text(this,"№ ${index+1}",17f,Ui.blue,true),LinearLayout.LayoutParams(0,-2,1f))
+   row.addView(Ui.text(this,duration(elapsed,true),18f,Ui.WHITE,true));card.addView(row)
+   card.addView(Ui.space(this,7));card.addView(small("От предыдущего: ${duration(TimerMath.split(elapsed,previous),true)}"))
+   body.addView(card);addGap(9)
+  }
+  if(showing&&s.running)handler.post(toolsTick)
+ }
+ override fun onBackPressed(){when{screen=="stopwatch"||screen=="timer_editor"->timersPage();screen=="themes"->settings();choosing->{resetSelection();home()};else->home()}}
 }
