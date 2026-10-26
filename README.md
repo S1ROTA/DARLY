@@ -18,9 +18,9 @@
 
 ## Сборка
 
-Запусти GitHub Actions: `.github/workflows/build-apk.yml`. Процесс собирает проект Gradle 8.10.2 / JDK 17 / Android SDK 35, запускает модульные тесты `:app:testDebugUnitTest`, затем `:app:assembleDebug`. Артефакт: `DARLY-debug-apk`.
+Запусти GitHub Actions: `.github/workflows/build-apk.yml`. Процесс собирает проект Gradle 8.10.2 / JDK 17 / Android SDK 35, запускает тесты `:app:testDebugUnitTest`, проверку `:app:lintDebug`, затем `:app:assembleDebug`. Артефакт: `DARLY-debug-apk`.
 
-APK собирается автоматически при обновлении ветки `main`. Готовый APK доступен на вкладке **Actions → успешная сборка → Artifacts → DARLY-debug-apk**. Для предварительного релиза используется тег `v2.5.1` и автоматическая публикация GitHub Release.
+APK собирается автоматически при обновлении ветки `main`. Готовый APK доступен на вкладке **Actions → успешная сборка → Artifacts → DARLY-debug-apk**. Для предварительного релиза используется тег `v2.5.2` и автоматическая публикация GitHub Release.
 
 ## Изменения версий
 

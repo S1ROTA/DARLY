@@ -36,6 +36,22 @@ class MainActivity:Activity(){
   if(screen=="home"){handler.removeCallbacks(refresh);handler.postDelayed(refresh,100)}
  }}
  private var registered=false
+ /** On Android 13+ app-only events must be registered as non-exported. */
+ private fun registerChangesReceiver(){
+  val filter=IntentFilter(AlarmStore.ACTION_CHANGED)
+  if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.TIRAMISU){
+   registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED)
+  }else{
+   registerLegacyChangesReceiver(filter)
+  }
+  registered=true
+ }
+ /** Android 8.0–12L do not support RECEIVER_NOT_EXPORTED. The fallback is
+  * only invoked below API 33; keep the Lint exception local to this call. */
+ @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
+ private fun registerLegacyChangesReceiver(filter:IntentFilter){
+  registerReceiver(changes,filter)
+ }
  private fun prefs()=getSharedPreferences("darly",0)
  private fun snoozeDefault()=prefs().getInt("default_snooze",5)
  private fun fadeDefault()=prefs().getInt("default_fade",30)
@@ -46,10 +62,7 @@ class MainActivity:Activity(){
   openCurrentScreen()
  }
  override fun onResume(){super.onResume();showing=true
-  if(!registered){val filter=IntentFilter(AlarmStore.ACTION_CHANGED)
-   if(Build.VERSION.SDK_INT>=33)registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED)else registerReceiver(changes,filter)
-   registered=true
-  }
+  if(!registered)registerChangesReceiver()
   handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh)
   val allowed=Build.VERSION.SDK_INT<31 || getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
   if(allowed && lastPermission==false)AlarmStore.reschedule(this)
