@@ -8,13 +8,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
-data class DAlarm(val id:Int,val hour:Int,val minute:Int,val days:Int,val sound:String,val enabled:Boolean=true,val title:String="Будильник",val vibrate:Boolean=true,val snooze:Int=5,val fade:Int=30)
+data class DAlarm(val id:Int,val hour:Int,val minute:Int,val days:Int,val sound:String,val enabled:Boolean=true,val title:String="Будильник",val vibrate:Boolean=true,val snooze:Int=5,val fade:Int=30,val groupId:Int=0,val seriesIndex:Int=0)
 object AlarmStore {
  private const val KEY="alarms"
  const val ACTION_CHANGED="com.darly.alarm.ALARMS_CHANGED"
  fun notifyChanged(c:Context){c.sendBroadcast(Intent(ACTION_CHANGED).setPackage(c.packageName))}
- fun all(c:Context):List<DAlarm> = try { val arr=JSONArray(c.getSharedPreferences("darly",0).getString(KEY,"[]")); (0 until arr.length()).map { val j=arr.getJSONObject(it); DAlarm(j.getInt("id"),j.getInt("h"),j.getInt("m"),j.getInt("days"),j.optString("sound"),j.optBoolean("enabled",true),j.optString("title","Будильник"),j.optBoolean("vibrate",true),j.optInt("snooze",5),j.optInt("fade",30)) } } catch (_:Exception) { emptyList() }
- fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply();notifyChanged(c) }
+ fun all(c:Context):List<DAlarm> = try { val arr=JSONArray(c.getSharedPreferences("darly",0).getString(KEY,"[]")); (0 until arr.length()).map { val j=arr.getJSONObject(it); DAlarm(j.getInt("id"),j.getInt("h"),j.getInt("m"),j.getInt("days"),j.optString("sound"),j.optBoolean("enabled",true),j.optString("title","Будильник"),j.optBoolean("vibrate",true),j.optInt("snooze",5),j.optInt("fade",30),j.optInt("groupId",0),j.optInt("seriesIndex",0)) } } catch (_:Exception) { emptyList() }
+ fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade).put("groupId",it.groupId).put("seriesIndex",it.seriesIndex)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply();notifyChanged(c) }
  fun schedule(c:Context,a:DAlarm):Boolean {
   val am=c.getSystemService(AlarmManager::class.java)
   val pi=PendingIntent.getBroadcast(c,a.id,Intent(c,AlarmReceiver::class.java).putExtra("id",a.id),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -24,6 +24,22 @@ object AlarmStore {
   repeat(8) { if(cal.timeInMillis>now && (a.days==0 || a.days and (1 shl ((cal.get(Calendar.DAY_OF_WEEK)+5)%7))!=0)) { if(Build.VERSION.SDK_INT>=31 && !am.canScheduleExactAlarms())return false
    try { am.setAlarmClock(AlarmManager.AlarmClockInfo(cal.timeInMillis,PendingIntent.getActivity(c,0,Intent(c,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)),pi) } catch (_:SecurityException) {return false};return true };cal.add(Calendar.DAY_OF_YEAR,1) }
   return false
+ }
+ /** Cancel both normal and snoozed PendingIntents before deleting an alarm. */
+ fun cancel(c:Context,a:DAlarm){
+  val disabled=a.copy(enabled=false)
+  schedule(c,disabled)
+  cancelSnooze(c,a.id)
+ }
+ /** Actual next occurrence, not numeric HH:mm sort. */
+ fun nextTime(a:DAlarm,now:Long=System.currentTimeMillis()):Long? {
+  if(!a.enabled)return null
+  val cal=Calendar.getInstance().apply{timeInMillis=now;set(Calendar.HOUR_OF_DAY,a.hour);set(Calendar.MINUTE,a.minute);set(Calendar.SECOND,0);set(Calendar.MILLISECOND,0)}
+  repeat(8){
+   if(cal.timeInMillis>now && (a.days==0 || a.days and (1 shl ((cal.get(Calendar.DAY_OF_WEEK)+5)%7))!=0))return cal.timeInMillis
+   cal.add(Calendar.DAY_OF_YEAR,1)
+  }
+  return null
  }
  private fun prefs(c:Context)=c.getSharedPreferences("darly_snooze",0)
  fun snoozeUntil(c:Context,id:Int):Long=prefs(c).getLong(id.toString(),0L)

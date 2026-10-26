@@ -2,18 +2,49 @@ package com.darly.alarm
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Build
 import android.view.Gravity
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
+import android.view.View
 import java.text.SimpleDateFormat
 import java.util.*
 
 class RingActivity:Activity(){
+ override fun onNewIntent(intent:Intent){super.onNewIntent(intent);recreate()}
  override fun onResume(){super.onResume();if(!RingService.active(this))finish()}
- override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState);if(!RingService.active(this)){finish();return};setShowWhenLocked(true);setTurnScreenOn(true);window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);Ui.applyTheme(this);window.statusBarColor=Ui.bg;val root=Ui.column(this).apply{gravity=Gravity.CENTER;Ui.pad(this@RingActivity,this,26,28);background=Ui.backdrop(this@RingActivity)};setContentView(root)
-  val sun=Ui.text(this,"☀",112f,Ui.gold).apply{gravity=Gravity.CENTER;alpha=0f;translationY=Ui.dp(this@RingActivity,100).toFloat()};root.addView(sun);sun.animate().alpha(1f).translationY(0f).setDuration(9000).start();root.addView(Ui.space(this,24));root.addView(Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),65f,Color.WHITE,true).apply{gravity=Gravity.CENTER});root.addView(Ui.text(this,"Будильник",26f,Color.WHITE,true).apply{gravity=Gravity.CENTER});root.addView(Ui.space(this,55));root.addView(Ui.button(this,"Отложить"){startService(Intent(this,RingService::class.java).setAction("SNOOZE"));finish()});root.addView(Ui.space(this,18));root.addView(Ui.button(this,"Выключить"){startService(Intent(this,RingService::class.java).setAction("STOP"));finish()})
+ override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
+  if(!RingService.active(this)){finish();return}
+  setShowWhenLocked(true);setTurnScreenOn(true)
+  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+  Ui.applyTheme(this);window.statusBarColor=Ui.bg;window.navigationBarColor=Ui.bg
+  val root=FrameLayout(this)
+  root.addView(ImageView(this).apply{setImageResource(Ui.background(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP},FrameLayout.LayoutParams(-1,-1))
+  root.addView(View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xb30b1220.toInt(),0xc70a1525.toInt(),0xf508101b.toInt()))},FrameLayout.LayoutParams(-1,-1))
+  val content=Ui.column(this).apply{gravity=Gravity.CENTER;Ui.pad(this@RingActivity,this,28,30)}
+  root.addView(content,FrameLayout.LayoutParams(-1,-1))
+  if(Build.VERSION.SDK_INT>=30)root.setOnApplyWindowInsetsListener{v,w->val s=w.getInsets(WindowInsets.Type.systemBars());v.setPadding(0,s.top,0,s.bottom);w}else root.fitsSystemWindows=true
+  setContentView(root)
+  val id=RingService.activeId(this)
+  val alarm=AlarmStore.all(this).firstOrNull{it.id==id}
+  val heading=Ui.text(this,"DARLY  /  СИГНАЛ",14f,Ui.gold,true).apply{gravity=Gravity.CENTER}
+  content.addView(heading);content.addView(Ui.space(this,34))
+  val clock=Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),77f,Ui.WHITE,true).apply{gravity=Gravity.CENTER}
+  content.addView(clock);content.addView(Ui.space(this,12))
+  content.addView(Ui.text(this,alarm?.title?:"Будильник",24f,Ui.WHITE,true).apply{gravity=Gravity.CENTER});content.addView(Ui.space(this,18))
+  content.addView(Ui.text(this,"Пора начинать день",15f,Ui.muted).apply{gravity=Gravity.CENTER})
+  content.addView(Ui.space(this,70))
+  content.addView(Ui.button(this,"Отложить на ${alarm?.snooze?:5} мин"){
+   startService(Intent(this,RingService::class.java).setAction("SNOOZE"));finish()
+  });content.addView(Ui.space(this,13))
+  content.addView(Ui.outlineButton(this,"Остановить"){
+   startService(Intent(this,RingService::class.java).setAction("STOP"));finish()
+  })
  }
 }
