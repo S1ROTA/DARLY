@@ -21,8 +21,19 @@ class RingActivity:Activity(){
  override fun onResume(){super.onResume();if(!RingService.active(this))finish()}
  override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
   if(!RingService.active(this)){finish();return}
-  setShowWhenLocked(true);setTurnScreenOn(true)
-  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+  // Activity.setShowWhenLocked / setTurnScreenOn were introduced in API 27.
+  // Android 8.0 (API 26) needs the legacy window flags instead.
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+   setShowWhenLocked(true)
+   setTurnScreenOn(true)
+  } else {
+   @Suppress("DEPRECATION")
+   window.addFlags(
+    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+   )
+  }
+  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   Ui.applyTheme(this);window.statusBarColor=Ui.bg;window.navigationBarColor=Ui.bg
   val root=FrameLayout(this)
   root.addView(ImageView(this).apply{setImageResource(Ui.background(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP},FrameLayout.LayoutParams(-1,-1))

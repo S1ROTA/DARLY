@@ -24,6 +24,16 @@ jobs:
         run: gradle --no-daemon :app:testDebugUnitTest
       - name: Android lint
         run: gradle --no-daemon :app:lintDebug
+      - name: Upload Android lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DARLY-lint-report
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.txt
+            app/build/reports/lint-results-debug.xml
+          if-no-files-found: ignore
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4

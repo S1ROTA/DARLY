@@ -1,6 +1,6 @@
 # DARLY · Android Alarm
 
-**DARLY 2.5.0 — Cinematic Edition** · Android 8.0+ (minSdk 26), targetSdk 35.
+**DARLY 2.5.1 — Cinematic Edition** · Android 8.0+ (minSdk 26), targetSdk 35.
 
 Локальный будильник на системном `AlarmManager.setAlarmClock`. Не требует облака и аккаунта.
 
@@ -20,20 +20,9 @@
 
 Запусти GitHub Actions: `.github/workflows/build-apk.yml`. Процесс собирает проект Gradle 8.10.2 / JDK 17 / Android SDK 35, запускает модульные тесты `:app:testDebugUnitTest`, затем `:app:assembleDebug`. Артефакт: `DARLY-debug-apk`.
 
-В Termux (если репозиторий уже настроен):
+APK собирается автоматически при обновлении ветки `main`. Готовый APK доступен на вкладке **Actions → успешная сборка → Artifacts → DARLY-debug-apk**. Для предварительного релиза используется тег `v2.5.1` и автоматическая публикация GitHub Release.
 
-```bash
-cd ~/DARLY
-unzip -o ~/storage/downloads/DARLY_2_5_0_Cinematic_Edition.zip
-git add .
-git commit -m "release: DARLY 2.5.0 cinematic redesign and alarm series"
-git push origin main
-# После успешной сборки можно опубликовать предварительный релиз:
-git tag v2.5.0
-git push origin v2.5.0
-```
-
-## Изменения 2.5.0
+## Изменения версий
 
 См. [CHANGELOG.md](CHANGELOG.md).
 
