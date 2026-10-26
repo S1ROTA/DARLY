@@ -107,7 +107,7 @@ class MainActivity:Activity(){
   }
   NextAlarmNotifier.sync(this)
  }
- override fun onPause(){showing=false;handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
+ override fun onPause(){stopPreview();showing=false;handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
   if(registered){unregisterReceiver(changes);registered=false}
   super.onPause()
  }
@@ -122,7 +122,7 @@ class MainActivity:Activity(){
   }
   if(requestCode==17&&resultCode==RESULT_OK)data?.data?.let{uri->
    try{contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)}catch(_:Exception){}
-   selectedSound=uri.toString();Toast.makeText(this,"Мелодия выбрана",Toast.LENGTH_SHORT).show()
+   selectedSound=uri.toString();soundName?.text=soundLabel();Toast.makeText(this,"Мелодия выбрана",Toast.LENGTH_SHORT).show()
   }
  }
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent)
@@ -136,11 +136,50 @@ class MainActivity:Activity(){
  private fun chooseWallpaper(){
   startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),28)
  }
+ private var soundName:TextView?=null
+ private fun soundLabel():String=when(selectedSound){
+  BundledSounds.TRUMPET->"Труба · Бодрое утро (DARLY)"
+  ""->"Системная мелодия"
+  else->"Своя мелодия"
+ }
+ private fun soundControls(){
+  body.addView(Ui.text(this,"МЕЛОДИЯ СИГНАЛА",13f,Ui.muted));addGap(10)
+  soundName=Ui.text(this,soundLabel(),14f,Ui.gold,true)
+  body.addView(soundName!!);addGap(11)
+  val row=Ui.row(this)
+  row.addView(Ui.button(this,"Труба"){selectedSound=BundledSounds.TRUMPET;soundName?.text=soundLabel()},LinearLayout.LayoutParams(0,-2,1f))
+  row.addView(Ui.hspace(this,12))
+  row.addView(Ui.outlineButton(this,"Другой звук"){chooseSound()},LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(row);addGap(10)
+  val other=Ui.row(this)
+  other.addView(Ui.outlineButton(this,"▶ Прослушать") {previewSelectedSound()},LinearLayout.LayoutParams(0,-2,1f))
+  other.addView(Ui.hspace(this,12))
+  other.addView(Ui.outlineButton(this,"Системная") {selectedSound="";soundName?.text=soundLabel()},LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(other)
+ }
+ private var previewPlayer:android.media.MediaPlayer?=null
+ private fun stopPreview(){try{previewPlayer?.stop()}catch(_:Exception){};previewPlayer?.release();previewPlayer=null}
+ private fun previewSelectedSound(){
+  stopPreview()
+  try{
+   val uri=BundledSounds.uri(this,selectedSound)
+   previewPlayer=android.media.MediaPlayer().apply{
+    setDataSource(this@MainActivity,uri)
+    setAudioAttributes(android.media.AudioAttributes.Builder()
+     .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+    setOnCompletionListener{stopPreview()}
+    prepare();start()
+   }
+  }catch(_:Exception){stopPreview();Toast.makeText(this,"Не удалось воспроизвести мелодию",Toast.LENGTH_SHORT).show()}
+ }
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
   val from=screen
   if(from=="home" && which!="home")resetSelection()
   selectionButton=null
+  soundName=null
+  stopPreview()
   countdownLabels.clear()
   screen=which;clockView=null;handler.removeCallbacks(clockTick);handler.removeCallbacks(toolsTick);timerLabels.clear();stopwatchClock=null;Ui.applyTheme(this)
   // Edge-to-edge: wallpaper is drawn beneath the transparent status bar.
@@ -153,7 +192,11 @@ class MainActivity:Activity(){
   val image=ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@MainActivity));scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription=null}
   Ui.animateWallpaper(this,image)
   root.addView(image,FrameLayout.LayoutParams(-1,-1))
-  val shade=View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0x9507101c.toInt(),0xdd07121f.toInt(),0xf5070e1b.toInt()))}
+  // Softer vignette for user images preserves contrast and visible photo detail.
+  val stops=if(Ui.theme(this)=="Своя фотография")
+   intArrayOf(0x7307101c,0xa507121f.toInt(),0xd5070e1b.toInt())
+   else intArrayOf(0x9507101c.toInt(),0xdd07121f.toInt(),0xf5070e1b.toInt())
+  val shade=View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,stops)}
   root.addView(shade,FrameLayout.LayoutParams(-1,-1))
   val frame=Ui.column(this)
   root.addView(frame,FrameLayout.LayoutParams(-1,-1))
@@ -210,12 +253,18 @@ class MainActivity:Activity(){
  }
  private fun bottomNavigation(active:String):LinearLayout{
   val nav=Ui.row(this).apply{setBackgroundColor(0xf209111e.toInt());setPadding(Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8),Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8))}
-  listOf(Triple("home","◷","Будильники"),Triple("presets","▦","Пресеты"),Triple("settings","⚙","Настройки")).forEach{(key,symbol,label)->
-   val item=Ui.column(this).apply{gravity=Gravity.CENTER}
-   item.addView(Ui.text(this,symbol,24f,if(key==active)Ui.blue else Ui.muted,true).apply{gravity=Gravity.CENTER})
-   item.addView(Ui.space(this,4));item.addView(Ui.text(this,label,11f,if(key==active)Ui.blue else Ui.muted).apply{gravity=Gravity.CENTER})
+  listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
+   val item=Ui.column(this).apply{gravity=Gravity.CENTER;contentDescription=label}
+   val icon=ImageView(this).apply{
+    setImageResource(iconId)
+    imageTintList=ColorStateList.valueOf(if(key==active)Ui.blue else Ui.muted)
+    scaleType=ImageView.ScaleType.FIT_CENTER
+    contentDescription=null
+   }
+   item.addView(icon,LinearLayout.LayoutParams(Ui.dp(this,28),Ui.dp(this,28)))
+   item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,12f,if(key==active)Ui.blue else Ui.muted).apply{gravity=Gravity.CENTER})
    Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();else->settings()}}
-   nav.addView(item,LinearLayout.LayoutParams(0,Ui.dp(this,54),1f))
+   nav.addView(item,LinearLayout.LayoutParams(0,Ui.dp(this,64),1f))
   }
   return nav
  }
@@ -276,13 +325,13 @@ class MainActivity:Activity(){
   if(snoozed.isNotEmpty()){section("Отложенные", "${snoozed.size}")
    snoozed.forEach{(a,until)->val c=Ui.card(this);c.addView(Ui.text(this,a.title,15f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(Ui.text(this,"Повтор в "+SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(until)),15f,Ui.gold));c.addView(Ui.space(this,6));c.addView(countdown(until));c.addView(Ui.space(this,10));c.addView(Ui.outlineButton(this,"Отменить повтор"){AlarmStore.cancelSnooze(this,a.id);home()});body.addView(c);addGap()}
   }
-  val r=Ui.row(this);r.addView(Ui.button(this,"＋ Будильник"){singleEditor(null)},LinearLayout.LayoutParams(0,-2,1f));r.addView(Ui.space(this,10));r.addView(Ui.outlineButton(this,"＋ Серия"){seriesEditor(null)},LinearLayout.LayoutParams(0,-2,1f));body.addView(r);addGap(26)
+  val r=Ui.row(this);r.addView(Ui.button(this,"＋ Будильник"){singleEditor(null)},LinearLayout.LayoutParams(0,-2,1f));r.addView(Ui.hspace(this,12));r.addView(Ui.outlineButton(this,"＋ Серия"){seriesEditor(null)},LinearLayout.LayoutParams(0,-2,1f));body.addView(r);addGap(26)
   val groups=SeriesStore.all(this)
   // Management controls stay hidden until the user long-presses an alarm card.
   if(choosing && (groups.isNotEmpty()||all.isNotEmpty())){
    val manage=Ui.row(this)
    manage.addView(selectButton("Готово"){resetSelection();home()},LinearLayout.LayoutParams(0,-2,1f))
-   manage.addView(Ui.space(this,8))
+   manage.addView(Ui.hspace(this,12))
    manage.addView(selectButton("Выбрать все"){
     selectedSeries.addAll(groups.map{it.id})
     selectedAlarms.addAll(all.filter{it.groupId==0}.map{it.id})
@@ -319,7 +368,7 @@ class MainActivity:Activity(){
    box.setOnCheckedChangeListener{_,on->if(on)selectedSeries.add(s.id)else selectedSeries.remove(s.id);updateSelectionButton()};top.addView(box)
    Ui.interactive(this,c){box.isChecked=!box.isChecked}
   }else { val toggle=Ui.switch(this,s.enabled);toggle.setOnCheckedChangeListener{_,on->SeriesStore.toggle(this,s.id,on);home()};top.addView(toggle) };c.addView(top);c.addView(Ui.space(this,14));c.addView(Ui.divider(this));c.addView(Ui.space(this,12))
-  if(!choosing){val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Настроить"){seriesEditor(s)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){SeriesStore.delete(this,s.id);home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
+  if(!choosing){val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Настроить"){seriesEditor(s)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.hspace(this,12));actions.addView(Ui.outlineButton(this,"Удалить"){SeriesStore.delete(this,s.id);home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
   val disclosure=Ui.text(this,"Показать расписание  ↓",13f,Ui.blue,true)
   disclosure.setPadding(0,Ui.dp(this,12),0,0);val preview=Ui.column(this)
   Ui.interactive(this,disclosure){if(preview.childCount>0){preview.removeAllViews();disclosure.text="Показать расписание  ↓"}else{
@@ -337,7 +386,7 @@ class MainActivity:Activity(){
    box.setOnCheckedChangeListener{_,on->if(on)selectedAlarms.add(a.id)else selectedAlarms.remove(a.id);updateSelectionButton()};top.addView(box)
    Ui.interactive(this,c){box.isChecked=!box.isChecked}
   }else { val toggle=Ui.switch(this,a.enabled);toggle.setOnCheckedChangeListener{_,enabled->val updated=a.copy(enabled=enabled);AlarmStore.save(this,AlarmStore.all(this).map{if(it.id==a.id)updated else it});AlarmStore.schedule(this,updated);home()};top.addView(toggle) };c.addView(top)
-  if(!choosing){c.addView(Ui.space(this,13));val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Изменить"){singleEditor(a)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.space(this,10));actions.addView(Ui.outlineButton(this,"Удалить"){AlarmStore.cancel(this,a);AlarmStore.save(this,AlarmStore.all(this).filter{it.id!=a.id});home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
+  if(!choosing){c.addView(Ui.space(this,13));val actions=Ui.row(this);actions.addView(Ui.outlineButton(this,"Изменить"){singleEditor(a)},LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.hspace(this,12));actions.addView(Ui.outlineButton(this,"Удалить"){AlarmStore.cancel(this,a);AlarmStore.save(this,AlarmStore.all(this).filter{it.id!=a.id});home()},LinearLayout.LayoutParams(0,-2,1f));c.addView(actions)}
   body.addView(c)
  }
  private fun daySelector(initial:Int,onChange:(Int)->Unit):LinearLayout{
@@ -345,7 +394,7 @@ class MainActivity:Activity(){
   labels.forEachIndexed{i,t->val view=Ui.text(this,t,12f,Ui.WHITE,true).apply{gravity=Gravity.CENTER;minHeight=Ui.dp(this@MainActivity,41)}
    fun paint(){view.background=Ui.shape(if(mask and (1 shl i)!=0)Ui.blue else 0xd9283547.toInt(),Ui.dp(this@MainActivity,10).toFloat());view.setTextColor(if(mask and (1 shl i)!=0)0xff0d192b.toInt()else Ui.muted)}
    paint();Ui.interactive(this,view){mask=mask xor (1 shl i);paint();onChange(mask)}
-   val lp=LinearLayout.LayoutParams(0,Ui.dp(this,41),1f);if(i>0)lp.marginStart=Ui.dp(this,5);row.addView(view,lp)
+   val lp=LinearLayout.LayoutParams(0,Ui.dp(this,41),1f);if(i>0)lp.marginStart=Ui.dp(this,6);row.addView(view,lp)
   }
   return row
  }
@@ -366,11 +415,11 @@ class MainActivity:Activity(){
  }
  private fun option(label:String,view:View){body.addView(Ui.text(this,label,14f,Ui.muted));addGap(7);body.addView(view);addGap(15)}
  private fun singleEditor(a:DAlarm?){selectedSound=a?.sound?:"";setupScreen("single","Будильник",if((a?.id?:0)<=0) "Новый сигнал" else "Изменение сигнала",true)
-  val p=layoutInflater.inflate(R.layout.darly_time_picker,body,false) as TimePicker
-  p.setIs24HourView(true);p.hour=a?.hour?:7;p.minute=a?.minute?:0;body.addView(p);addGap(12)
+  val p=CompactTimePicker(this).apply{hour=a?.hour?:7;minute=a?.minute?:0}
+  body.addView(p);addGap(12)
   val title=textInput(a?.title?:"Будильник","Название");option("НАЗВАНИЕ",title)
   body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);var days=a?.days?:0;body.addView(daySelector(days){days=it});addGap(19)
-  body.addView(Ui.outlineButton(this,"♪  Выбрать мелодию"){chooseSound()});addGap(16)
+  soundControls();addGap(16)
   val vibrate=Ui.switch(this,a?.vibrate?:vibrateDefault());val vr=Ui.row(this);vr.addView(Ui.text(this,"Вибрация",15f),LinearLayout.LayoutParams(0,-2,1f));vr.addView(vibrate);body.addView(vr);addGap(18)
   val snoozes=listOf(1,5,10,15,20,30);val snooze=picker(snoozes,a?.snooze?:snoozeDefault()){ "$it мин" };option("ОТЛОЖИТЬ НА",snooze)
   val fades=listOf(0,15,30,60,120);val fade=picker(fades,a?.fade?:fadeDefault()){if(it==0) "Без нарастания" else "$it сек"};option("НАРАСТАНИЕ ГРОМКОСТИ",fade)
@@ -387,8 +436,8 @@ class MainActivity:Activity(){
  private fun seriesEditor(existing:AlarmSeries?){val source=existing?:AlarmSeries(vibrate=vibrateDefault(),snooze=snoozeDefault(),fade=fadeDefault())
   selectedSound=source.sound;setupScreen("series","Серия будильников",if((existing?.id ?: 0)>0) "Изменение расписания" else "Несколько сигналов с интервалом",true)
   val name=textInput(source.title,"Например, Работа");option("НАЗВАНИЕ СЕРИИ",name)
-  val t=layoutInflater.inflate(R.layout.darly_time_picker,body,false) as TimePicker
-  t.setIs24HourView(true);t.hour=source.start/60;t.minute=source.start%60;body.addView(Ui.text(this,"ПЕРВЫЙ СИГНАЛ",13f,Ui.muted));body.addView(t);addGap(12)
+  val t=CompactTimePicker(this).apply{hour=source.start/60;minute=source.start%60}
+  body.addView(Ui.text(this,"ПЕРВЫЙ СИГНАЛ",13f,Ui.muted));addGap(10);body.addView(t);addGap(12)
   var days=source.days
   body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);body.addView(daySelector(days){days=it});addGap(20)
   val intervals=listOf(5,10,15,20,30,45,60);val interval=picker(intervals,source.step){"Каждые $it мин"};option("ИНТЕРВАЛ",interval)
@@ -396,13 +445,13 @@ class MainActivity:Activity(){
   val preview=Ui.card(this);preview.addView(Ui.text(this,"ПРЕДПРОСМОТР",11f,Ui.gold,true));val content=Ui.text(this,"",15f,Ui.WHITE)
   preview.addView(Ui.space(this,8));preview.addView(content);body.addView(preview);addGap(17)
   fun updatePreview(){val step=intervals[interval.selectedItemPosition.coerceAtLeast(0)];val n=counts[count.selectedItemPosition.coerceAtLeast(0)];val start=t.hour*60+t.minute;val times=(0 until n).map{time((start+it*step)%1440)};content.text=times.chunked(4).joinToString("\n"){it.joinToString("     ")}}
-  t.setOnTimeChangedListener{_,_,_->updatePreview()}
+  t.setOnTimeChangedListener{updatePreview()}
   val update=object:android.widget.AdapterView.OnItemSelectedListener{
    override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
    override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){updatePreview()}
   };interval.onItemSelectedListener=update;count.onItemSelectedListener=update;updatePreview()
   val vibrate=Ui.switch(this,source.vibrate);val v=Ui.row(this);v.addView(Ui.text(this,"Вибрация",15f),LinearLayout.LayoutParams(0,-2,1f));v.addView(vibrate);body.addView(v);addGap(13)
-  body.addView(Ui.outlineButton(this,"♪  Мелодия для всей серии"){chooseSound()});addGap(17)
+  soundControls();addGap(17)
   val snoozes=listOf(1,5,10,15,20,30);val snooze=picker(snoozes,source.snooze){"$it мин"};option("ОТЛОЖИТЬ НА",snooze)
   val fades=listOf(0,15,30,60,120);val fade=picker(fades,source.fade){if(it==0) "Без нарастания" else "$it сек"};option("НАРАСТАНИЕ ГРОМКОСТИ",fade)
   fun draft()=AlarmSeries(source.id,name.text.toString().trim().ifBlank{"Серия"},t.hour*60+t.minute,intervals[interval.selectedItemPosition],counts[count.selectedItemPosition],days,if(source.id>0)source.enabled else true,selectedSound,vibrate.isChecked,snoozes[snooze.selectedItemPosition],fades[fade.selectedItemPosition])
@@ -446,8 +495,7 @@ class MainActivity:Activity(){
     try{startActivity(Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",android.net.Uri.parse("package:$packageName")))}catch(_:Exception){Toast.makeText(this,"Открой разрешения DARLY в настройках системы",Toast.LENGTH_LONG).show()}
    });addGap(10)
   }
-  body.addView(small("На POCO / HyperOS также разреши автозапуск и работу без ограничений батареи. Иначе система может задерживать запуск будильников."));addGap(23)
-  body.addView(small("DARLY 2.8.0 · Ambient Edition"))
+  body.addView(small("DARLY 2.9.0"))
  }
  private fun themes(){setupScreen("themes","Оформление","Сезоны и собственные фотографии",true)
   body.addView(Ui.button(this,"＋  Выбрать фотографию из галереи"){chooseWallpaper()});addGap(13)
@@ -472,7 +520,7 @@ class MainActivity:Activity(){
   val timers=if(active=="timers")Ui.button(this,"Таймеры"){if(active!="timers")timersPage()}
              else Ui.outlineButton(this,"Таймеры"){timersPage()}
   row.addView(timers,LinearLayout.LayoutParams(0,-2,1f))
-  row.addView(Ui.space(this,9))
+  row.addView(Ui.hspace(this,12))
   val watch=if(active=="stopwatch")Ui.button(this,"Секундомер"){if(active!="stopwatch")stopwatchPage()}
             else Ui.outlineButton(this,"Секундомер"){stopwatchPage()}
   row.addView(watch,LinearLayout.LayoutParams(0,-2,1f))
@@ -495,7 +543,7 @@ class MainActivity:Activity(){
      AlarmStore.exactPermission(this);Toast.makeText(this,"Нужен доступ к точным будильникам",Toast.LENGTH_LONG).show()
     };timersPage()
    },LinearLayout.LayoutParams(0,-2,1f))
-   row.addView(Ui.space(this,7))
+   row.addView(Ui.hspace(this,12))
    row.addView(Ui.outlineButton(this,"Сброс"){
     TimerStore.reset(this,t.id);timersPage()
    },LinearLayout.LayoutParams(0,-2,1f))
@@ -503,10 +551,10 @@ class MainActivity:Activity(){
    val extra=Ui.row(this)
    extra.addView(Ui.outlineButton(this,"＋1 мин"){
     TimerStore.addTime(this,t.id,60000);timersPage()
-   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.space(this,7))
+   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.hspace(this,12))
    extra.addView(Ui.outlineButton(this,"＋5 мин"){
     TimerStore.addTime(this,t.id,300000);timersPage()
-   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.space(this,7))
+   },LinearLayout.LayoutParams(0,-2,1f));extra.addView(Ui.hspace(this,12))
    extra.addView(Ui.outlineButton(this,"Удалить"){
     TimerStore.delete(this,t.id);timersPage()
    },LinearLayout.LayoutParams(0,-2,1f))
@@ -521,13 +569,16 @@ class MainActivity:Activity(){
   body.addView(display);addGap(22)
   val quick=listOf(0L to "＋10 сек",1L to "＋1 мин",5L to "＋5 мин",10L to "＋10 мин",30L to "＋30 мин",60L to "＋1 час")
   quick.chunked(2).forEach{group->val row=Ui.row(this)
-   group.forEach{(minutes,label)->val b=Ui.outlineButton(this,label){val extra=if(minutes==0L)10000L else minutes*60000L;total=(total+extra).coerceAtMost(7*24*3600000L);display.text=duration(total)}
-    row.addView(b,LinearLayout.LayoutParams(0,-2,1f));row.addView(Ui.space(this,9))}
+   group.forEachIndexed{index,(minutes,label)->
+    val b=Ui.outlineButton(this,label){val extra=if(minutes==0L)10000L else minutes*60000L;total=(total+extra).coerceAtMost(7*24*3600000L);display.text=duration(total)}
+    if(index>0)row.addView(Ui.hspace(this,12))
+    row.addView(b,LinearLayout.LayoutParams(0,-2,1f))
+   }
    body.addView(row);addGap(9)
   }
   val row=Ui.row(this)
   row.addView(Ui.outlineButton(this,"−1 мин"){total=(total-60000).coerceAtLeast(0L);display.text=duration(total)},LinearLayout.LayoutParams(0,-2,1f))
-  row.addView(Ui.space(this,9));row.addView(Ui.outlineButton(this,"Обнулить"){total=0;display.text=duration(total)},LinearLayout.LayoutParams(0,-2,1f))
+  row.addView(Ui.hspace(this,12));row.addView(Ui.outlineButton(this,"Обнулить"){total=0;display.text=duration(total)},LinearLayout.LayoutParams(0,-2,1f))
   body.addView(row);addGap(21)
   body.addView(Ui.button(this,"Создать и запустить"){
    if(total==0L){Toast.makeText(this,"Добавь время",Toast.LENGTH_SHORT).show();return@button}
@@ -548,7 +599,7 @@ class MainActivity:Activity(){
   controls.addView(Ui.button(this,if(s.running)"Стоп · записать" else "Старт"){
    if(s.running)StopwatchStore.stop(this)else StopwatchStore.start(this)
    stopwatchPage()
-  },LinearLayout.LayoutParams(0,-2,1.25f));controls.addView(Ui.space(this,7))
+  },LinearLayout.LayoutParams(0,-2,1.25f));controls.addView(Ui.hspace(this,12))
   if(s.running||s.accrued>0L)controls.addView(Ui.outlineButton(this,if(s.running)"Пауза" else "Продолжить"){
    if(s.running)StopwatchStore.pause(this)else StopwatchStore.start(this)
    stopwatchPage()

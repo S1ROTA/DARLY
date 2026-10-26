@@ -5,6 +5,8 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.os.Build
 import android.graphics.drawable.Drawable
 import android.graphics.BitmapShader
 import android.graphics.Color as AndroidColor
@@ -34,11 +36,38 @@ object Ui {
  private val wallpaperCache=object:LruCache<Int,Bitmap>(16*1024*1024){
   override fun sizeOf(key:Int,value:Bitmap):Int=value.byteCount
  }
- fun clearWallpaperCache(){wallpaperCache.evictAll()}
+ private var customCached:Bitmap?=null
+ private var customStamp:Long=Long.MIN_VALUE
+ fun clearWallpaperCache(){wallpaperCache.evictAll();customCached=null;customStamp=Long.MIN_VALUE}
  fun hasCustomWallpaper(c:Context)=c.getFileStreamPath("darly_custom_wallpaper.jpg").exists()
+ /** The source is copied byte-for-byte; only its *display bitmap* is size-limited.
+  * No fixed 2x downsampling: preserves sharp detail on high-resolution phones. */
  fun customWallpaper(c:Context):BitmapDrawable?=try{
   val file=c.getFileStreamPath("darly_custom_wallpaper.jpg")
-  if(!file.exists())null else BitmapDrawable(c.resources,BitmapFactory.decodeFile(file.absolutePath,BitmapFactory.Options().apply{inSampleSize=2}))
+  if(!file.exists())null else {
+   val stamp=file.lastModified() xor file.length()
+   var bitmap=customCached?.takeIf{customStamp==stamp && !it.isRecycled}
+   if(bitmap==null){
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    BitmapFactory.decodeFile(file.absolutePath,bounds)
+    if(bounds.outWidth<=0||bounds.outHeight<=0)throw IllegalArgumentException("Not an image")
+    val dm=c.resources.displayMetrics
+    val (tw,th)=WallpaperSize.target(bounds.outWidth,bounds.outHeight,dm.widthPixels,dm.heightPixels)
+    bitmap=if(Build.VERSION.SDK_INT>=28){
+     val source=ImageDecoder.createSource(file)
+     ImageDecoder.decodeBitmap(source){decoder,_,_->
+      decoder.setTargetSize(tw,th)
+      decoder.allocator=ImageDecoder.ALLOCATOR_SOFTWARE
+     }
+    }else{
+     var sample=1
+     while(bounds.outWidth/(sample*2)>=tw && bounds.outHeight/(sample*2)>=th)sample*=2
+     BitmapFactory.decodeFile(file.absolutePath,BitmapFactory.Options().apply{inSampleSize=sample;inScaled=false})
+    }
+    customCached=bitmap;customStamp=stamp
+   }
+   bitmap?.let{BitmapDrawable(c.resources,it)}
+  }
  }catch(_:Exception){null}
  fun wallpaper(c:Context):Drawable{
   if(theme(c)=="Своя фотография")customWallpaper(c)?.let{return it}
@@ -90,11 +119,14 @@ object Ui {
  fun animateWallpaper(c:Context,image:android.widget.ImageView){
   if(!c.getSharedPreferences("darly",0).getBoolean("animations",true))return
   if(!ValueAnimator.areAnimatorsEnabled())return
-  image.scaleX=1.04f;image.scaleY=1.04f
+  val custom=theme(c)=="Своя фотография"
+  val begin=if(custom)1.015f else 1.04f
+  val end=if(custom)1.045f else 1.10f
+  image.scaleX=begin;image.scaleY=begin
   image.animate().cancel()
-  image.animate().scaleX(1.10f).scaleY(1.10f).setDuration(28000L)
+  image.animate().scaleX(end).scaleY(end).setDuration(28000L)
    .setInterpolator(LinearInterpolator()).withEndAction{
-    if(image.isAttachedToWindow)image.animate().scaleX(1.04f).scaleY(1.04f).setDuration(28000L).start()
+    if(image.isAttachedToWindow)image.animate().scaleX(begin).scaleY(begin).setDuration(28000L).start()
    }.start()
  }
  fun dp(c:Context,n:Int)=(n*c.resources.displayMetrics.density+.5f).toInt()
@@ -106,8 +138,19 @@ object Ui {
  fun column(c:Context)=LinearLayout(c).apply{orientation=LinearLayout.VERTICAL}
  fun row(c:Context)=LinearLayout(c).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
  fun space(c:Context,h:Int)=View(c).apply{layoutParams=LinearLayout.LayoutParams(1,dp(c,h))}
+ /** Horizontal gaps must have a width, not the 1px vertical spacer's width. */
+ fun hspace(c:Context,w:Int)=View(c).apply{layoutParams=LinearLayout.LayoutParams(dp(c,w),1)}
  fun pad(c:Context,v:View,x:Int=18,y:Int=16){v.setPadding(dp(c,x),dp(c,y),dp(c,x),dp(c,y))}
  fun feedback(c:Context,v:View){
+  val p=c.getSharedPreferences("darly",0)
+  if(p.getBoolean("sound_buttons",true))v.playSoundEffect(SoundEffectConstants.CLICK)
+  if(p.getBoolean("haptic_buttons",true))v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+ }
+ private var lastWheelFeedback=0L
+ fun wheelFeedback(c:Context,v:View){
+  val now=android.os.SystemClock.uptimeMillis()
+  if(now-lastWheelFeedback<65L)return
+  lastWheelFeedback=now
   val p=c.getSharedPreferences("darly",0)
   if(p.getBoolean("sound_buttons",true))v.playSoundEffect(SoundEffectConstants.CLICK)
   if(p.getBoolean("haptic_buttons",true))v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -132,11 +175,11 @@ object Ui {
   v.setOnClickListener{feedback(c,v);action()}
  }
  fun button(c:Context,s:String,action:()->Unit)=text(c,s,15f,0xff08111f.toInt(),true).apply{
-  gravity=Gravity.CENTER;background=shape(blue,dp(c,17).toFloat());setPadding(dp(c,17),dp(c,15),dp(c,17),dp(c,15));minHeight=dp(c,51)
+  gravity=Gravity.CENTER;background=shape(blue,dp(c,17).toFloat());setPadding(dp(c,15),dp(c,14),dp(c,15),dp(c,14));minHeight=dp(c,54)
   interactive(c,this,action)
  }
  fun outlineButton(c:Context,s:String,action:()->Unit)=text(c,s,15f,WHITE,true).apply{
-  gravity=Gravity.CENTER;background=shape(0xc81d2b40.toInt(),dp(c,16).toFloat(),0x56678094);setPadding(dp(c,15),dp(c,14),dp(c,15),dp(c,14));minHeight=dp(c,49)
+  gravity=Gravity.CENTER;background=shape(0xc81d2b40.toInt(),dp(c,16).toFloat(),0x56678094);setPadding(dp(c,15),dp(c,14),dp(c,15),dp(c,14));minHeight=dp(c,54)
   interactive(c,this,action)
  }
  fun card(c:Context)=column(c).apply{

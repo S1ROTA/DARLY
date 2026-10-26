@@ -37,7 +37,7 @@ class RingService:Service(){
   // Explicit launch: full-screen notification alone can be suppressed by OEM/Android settings.
   try { startActivity(Intent(this,RingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)) }catch(_:Exception){}
   if(alarm?.vibrate!=false){try{vibrator=if(Build.VERSION.SDK_INT>=31)getSystemService(VibratorManager::class.java).defaultVibrator else getSystemService(VIBRATOR_SERVICE) as Vibrator;vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0,650,400,650,900),0))}catch(_:Exception){}}
-  val uri=alarm?.sound?.takeIf{it.isNotBlank()}?.let{Uri.parse(it)}?:RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+  val uri=BundledSounds.uri(this,alarm?.sound.orEmpty())
   try{startSound(uri)}catch(_:Exception){try{player?.release();startSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM))}catch(_:Exception){}}
   return START_NOT_STICKY
  }
