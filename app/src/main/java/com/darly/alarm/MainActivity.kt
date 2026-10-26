@@ -20,7 +20,7 @@ class MainActivity: Activity() {
  override fun onResume() { super.onResume(); if(::root.isInitialized) showHome() }
  private fun label(t:String,size:Float=18f,color:Int=Color.WHITE)=TextView(this).apply { text=t; textSize=size; setTextColor(color); gravity=Gravity.CENTER_VERTICAL; setPadding(8,14,8,14) }
  private fun button(t:String, action:()->Unit)=Button(this).apply { text=t; setTextColor(bg); setBackgroundTintList(android.content.res.ColorStateList.valueOf(gold)); setOnClickListener{action()} }
- private fun base(title:String) { root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(26,35,26,20); setBackgroundColor(bg) }; setContentView(ScrollView(this).apply { fillViewport=true; addView(root) }); root.addView(label(title,33f,gold)) }
+ private fun base(title:String) { root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(26,35,26,20); setBackgroundColor(bg) }; setContentView(ScrollView(this).apply { setFillViewport(true); addView(root) }); root.addView(label(title,33f,gold)) }
  private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_LONG).show()
  private fun showHome() { base("DARLY  ☾"); root.addView(label("Твоё время. Твой ритм.",15f,gold)); root.addView(label("БУДИЛЬНИКИ",13f,Color.LTGRAY)); val list=AlarmStore.all(this)
   if(list.isEmpty()) root.addView(label("Пока нет будильников. Создай первый ✨",17f))
