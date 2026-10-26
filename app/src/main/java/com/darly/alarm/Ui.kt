@@ -3,13 +3,17 @@ package com.darly.alarm
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
+import android.util.LruCache
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.HapticFeedbackConstants
 import android.view.SoundEffectConstants
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -18,6 +22,18 @@ import java.util.Calendar
 
 /** Minimal native-view design system. No third-party runtime dependencies. */
 object Ui {
+ // Prevent background decode on every tab switch; original assets are 720×1440.
+ // Cache is memory bounded and decoding never inflates bitmaps to device density.
+ private val wallpaperCache=object:LruCache<Int,Bitmap>(16*1024*1024){
+  override fun sizeOf(key:Int,value:Bitmap):Int=value.byteCount
+ }
+ fun wallpaper(c:Context):BitmapDrawable{
+  val id=background(c)
+  val bitmap=synchronized(wallpaperCache){
+   wallpaperCache.get(id)?:BitmapFactory.decodeResource(c.resources,id,BitmapFactory.Options().apply{inScaled=false}).also{wallpaperCache.put(id,it)}
+  }
+  return BitmapDrawable(c.resources,bitmap)
+ }
  var bg=0xff080f1b.toInt()
  var card=0xe8172334.toInt()
  var blue=0xff75a6ff.toInt()
@@ -55,8 +71,16 @@ object Ui {
   v.isClickable=true;v.isFocusable=true
   v.setOnTouchListener{view,event->
    if(c.getSharedPreferences("darly",0).getBoolean("animations",true))when(event.actionMasked){
-    MotionEvent.ACTION_DOWN->view.animate().scaleX(.965f).scaleY(.965f).setDuration(95).setInterpolator(DecelerateInterpolator()).start()
-    MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->view.animate().scaleX(1f).scaleY(1f).setDuration(190).setInterpolator(DecelerateInterpolator()).start()
+    MotionEvent.ACTION_DOWN->{
+     view.animate().cancel()
+     view.animate().scaleX(.985f).scaleY(.985f).setDuration(150)
+      .setInterpolator(PathInterpolator(.25f,.1f,.25f,1f)).start()
+    }
+    MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{
+     view.animate().cancel()
+     view.animate().scaleX(1f).scaleY(1f).setDuration(300)
+      .setInterpolator(PathInterpolator(.16f,1f,.3f,1f)).start()
+    }
    }
    false
   }

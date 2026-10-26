@@ -9,6 +9,9 @@ import org.json.JSONObject
 import java.util.Calendar
 
 data class DAlarm(val id:Int,val hour:Int,val minute:Int,val days:Int,val sound:String,val enabled:Boolean=true,val title:String="Будильник",val vibrate:Boolean=true,val snooze:Int=5,val fade:Int=30,val groupId:Int=0,val seriesIndex:Int=0)
+/** A planned alarm may be regular or a one-time snoozed occurrence. */
+data class UpcomingAlarm(val alarm:DAlarm,val whenAt:Long,val snoozed:Boolean)
+
 object AlarmStore {
  private const val KEY="alarms"
  const val ACTION_CHANGED="com.darly.alarm.ALARMS_CHANGED"
@@ -41,9 +44,16 @@ object AlarmStore {
   }
   return null
  }
+ /** Picks the actual earliest ring, including snoozes (which can outlive a disabled one-shot). */
+ fun nextUpcoming(c:Context,now:Long=System.currentTimeMillis()):UpcomingAlarm? {
+  val alarms=all(c)
+  val regular=alarms.mapNotNull{a->nextTime(a,now)?.let{UpcomingAlarm(a,it,false)}}
+  val snoozed=alarms.mapNotNull{a->snoozeUntil(c,a.id).takeIf{it>now}?.let{UpcomingAlarm(a,it,true)}}
+  return (regular+snoozed).minByOrNull{it.whenAt}
+ }
  private fun prefs(c:Context)=c.getSharedPreferences("darly_snooze",0)
  fun snoozeUntil(c:Context,id:Int):Long=prefs(c).getLong(id.toString(),0L)
- fun setSnooze(c:Context,id:Int,until:Long){prefs(c).edit().putLong(id.toString(),until).apply();notifyChanged(c)}
+ fun setSnooze(c:Context,id:Int,until:Long){prefs(c).edit().putLong(id.toString(),until).apply();notifyChanged(c);NextAlarmNotifier.sync(c)}
  fun clearSnooze(c:Context,id:Int){setSnooze(c,id,0L)}
  fun snoozed(c:Context):List<Pair<DAlarm,Long>> = all(c).mapNotNull { a -> val until=snoozeUntil(c,a.id);if(until>System.currentTimeMillis()) a to until else null }
  fun cancelSnooze(c:Context,id:Int){

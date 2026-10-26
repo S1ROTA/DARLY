@@ -1,6 +1,7 @@
 package com.darly.alarm
 
 import android.app.Activity
+import android.graphics.Color
 import android.content.Intent
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -34,13 +35,21 @@ class RingActivity:Activity(){
    )
   }
   window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-  Ui.applyTheme(this);window.statusBarColor=Ui.bg;window.navigationBarColor=Ui.bg
+  Ui.applyTheme(this)
+  // Preserve the selected wallpaper behind the status bar while ringing.
+  window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+  window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+  window.statusBarColor=Color.TRANSPARENT
+  window.navigationBarColor=Ui.bg
+  @Suppress("DEPRECATION")
+  window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+  if(Build.VERSION.SDK_INT>=29)window.isStatusBarContrastEnforced=false
   val root=FrameLayout(this)
-  root.addView(ImageView(this).apply{setImageResource(Ui.background(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP},FrameLayout.LayoutParams(-1,-1))
+  root.addView(ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@RingActivity));scaleType=ImageView.ScaleType.CENTER_CROP},FrameLayout.LayoutParams(-1,-1))
   root.addView(View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xb30b1220.toInt(),0xc70a1525.toInt(),0xf508101b.toInt()))},FrameLayout.LayoutParams(-1,-1))
   val content=Ui.column(this).apply{gravity=Gravity.CENTER;Ui.pad(this@RingActivity,this,28,30)}
   root.addView(content,FrameLayout.LayoutParams(-1,-1))
-  if(Build.VERSION.SDK_INT>=30)root.setOnApplyWindowInsetsListener{v,w->val s=w.getInsets(WindowInsets.Type.systemBars());v.setPadding(0,s.top,0,s.bottom);w}else root.fitsSystemWindows=true
+  if(Build.VERSION.SDK_INT>=30)root.setOnApplyWindowInsetsListener{_,w->val s=w.getInsets(WindowInsets.Type.systemBars());content.setPadding(Ui.dp(this,28),s.top+Ui.dp(this,30),Ui.dp(this,28),s.bottom+Ui.dp(this,30));w}else content.fitsSystemWindows=true
   setContentView(root)
   val id=RingService.activeId(this)
   val alarm=AlarmStore.all(this).firstOrNull{it.id==id}

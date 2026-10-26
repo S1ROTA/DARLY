@@ -11,7 +11,9 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
+import android.view.HapticFeedbackConstants
+import android.content.res.ColorStateList
 import android.view.View
 import android.view.WindowInsets
 import android.widget.*
@@ -26,6 +28,7 @@ class MainActivity:Activity(){
  private var showing=false
  private var choosing=false
  private var selectionButton:TextView?=null
+ private val countdownLabels=mutableListOf<Pair<TextView,Long>>()
  private val selectedAlarms=linkedSetOf<Int>()
  private val selectedSeries=linkedSetOf<Int>()
  private val timerLabels=mutableMapOf<Int,TextView>()
@@ -45,8 +48,19 @@ class MainActivity:Activity(){
  private val handler=Handler(Looper.getMainLooper())
  private val clockTick=object:Runnable{override fun run(){
   if(screen=="home" && showing){
-   clockView?.text=SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date())
-   handler.postDelayed(this,60000-(System.currentTimeMillis()%60000))
+   val now=System.currentTimeMillis()
+   val displayed=SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(now))
+   if(clockView?.text?.toString()!=displayed)clockView?.text=displayed
+   countdownLabels.forEach{(view,at)->
+    val remaining=CountdownText.until(at,now)
+    if(view.text.toString()!=remaining)view.text=remaining
+   }
+   // Minute ticks normally; precise seconds only in the last minute before a signal.
+   // Only existing TextViews change — no card or wallpaper gets rebuilt.
+   val finalMinute=countdownLabels.any{(_,at)->at>now && at-now<60000L}
+   val interval=if(finalMinute)(1000-now%1000).coerceAtLeast(100L)
+    else (60000-now%60000).coerceAtLeast(1000L)
+   handler.postDelayed(this,interval)
   }
  }}
  private val refresh=Runnable{when(screen){"home"->home();"timers"->timersPage()}}
@@ -114,7 +128,9 @@ class MainActivity:Activity(){
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
   val from=screen
+  if(from=="home" && which!="home")resetSelection()
   selectionButton=null
+  countdownLabels.clear()
   screen=which;clockView=null;handler.removeCallbacks(clockTick);handler.removeCallbacks(toolsTick);timerLabels.clear();stopwatchClock=null;Ui.applyTheme(this)
   // Edge-to-edge: wallpaper is drawn beneath the transparent status bar.
   window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
@@ -123,7 +139,7 @@ class MainActivity:Activity(){
   window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
   if(Build.VERSION.SDK_INT>=29)window.isStatusBarContrastEnforced=false
   val root=FrameLayout(this)
-  val image=ImageView(this).apply{setImageResource(Ui.background(this@MainActivity));scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription=null}
+  val image=ImageView(this).apply{setImageDrawable(Ui.wallpaper(this@MainActivity));scaleType=ImageView.ScaleType.CENTER_CROP;contentDescription=null}
   root.addView(image,FrameLayout.LayoutParams(-1,-1))
   val shade=View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0x9507101c.toInt(),0xdd07121f.toInt(),0xf5070e1b.toInt()))}
   root.addView(shade,FrameLayout.LayoutParams(-1,-1))
@@ -141,20 +157,44 @@ class MainActivity:Activity(){
   if(subtitle.isNotBlank()){heading.addView(Ui.space(this,4));heading.addView(Ui.text(this,subtitle,12f,Ui.muted))}
   bar.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
   if(!back){
-   val timer=Ui.text(this,"◴",28f,Ui.muted,true).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,43);contentDescription="Таймер и секундомер"}
-   Ui.interactive(this,timer){timersPage()};bar.addView(timer)
+   // Distinct clock face, crown and side controls; generous 52dp tap target.
+   val timer=ImageView(this).apply{
+    setImageResource(R.drawable.ic_stopwatch)
+    imageTintList=ColorStateList.valueOf(Ui.muted)
+    scaleType=ImageView.ScaleType.CENTER_INSIDE
+    setPadding(Ui.dp(this@MainActivity,7),Ui.dp(this@MainActivity,7),Ui.dp(this@MainActivity,7),Ui.dp(this@MainActivity,7))
+    contentDescription="Таймер и секундомер"
+   }
+   Ui.interactive(this,timer){timersPage()};bar.addView(timer,LinearLayout.LayoutParams(Ui.dp(this,52),Ui.dp(this,52)))
    val gear=Ui.text(this,"⚙",27f,Ui.muted).apply{gravity=Gravity.CENTER;minWidth=Ui.dp(this@MainActivity,43)}
    gear.contentDescription="Настройки";Ui.interactive(this,gear){settings()};bar.addView(gear)
   }
   body.addView(bar);body.addView(Ui.space(this,23))
   if(which=="home"||which=="presets"||which=="settings")frame.addView(bottomNavigation(which))
-  setContentView(root)
-  // Lightweight tab transition; only on actual navigation, not live list updates.
+  // Retain the outgoing tab during the cross-fade instead of replacing it in one frame.
+  // This also avoids the abrupt flicker of switching the entire content view.
   val tabs=listOf("home","presets","settings")
-  if(from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)){
-   root.alpha=0.7f
-   root.translationX=Ui.dp(this,if(tabs.indexOf(which)>tabs.indexOf(from))28 else -28).toFloat()
-   root.animate().alpha(1f).translationX(0f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
+  val animateTabs=from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)
+  val holder=findViewById<android.view.ViewGroup>(android.R.id.content)
+  if(animateTabs && holder.childCount>0){
+   while(holder.childCount>1){
+    val stale=holder.getChildAt(0)
+    stale.animate().cancel();holder.removeView(stale)
+   }
+   val outgoing=holder.getChildAt(0)
+   outgoing.animate().cancel()
+   holder.addView(root,android.view.ViewGroup.LayoutParams(-1,-1))
+   root.alpha=0f
+   root.animate().alpha(1f).setDuration(420)
+    .setInterpolator(PathInterpolator(.22f,1f,.36f,1f)).start()
+   scroll.translationX=Ui.dp(this,if(tabs.indexOf(which)>tabs.indexOf(from))18 else -18).toFloat()
+   scroll.animate().translationX(0f).setDuration(450)
+    .setInterpolator(PathInterpolator(.22f,1f,.36f,1f)).start()
+   outgoing.animate().alpha(0f).setDuration(320)
+    .withEndAction{if(outgoing.parent===holder)holder.removeView(outgoing)}.start()
+  }else{
+   // Data refreshes never perform the navigation animation.
+   setContentView(root)
   }
  }
  // Horizontal swipes switch between primary sections, without disrupting vertical scrolls.
@@ -189,9 +229,20 @@ class MainActivity:Activity(){
  private fun daysLabel(mask:Int):String{if(mask==0)return "Однократно";if(mask==127)return "Ежедневно";if(mask==31)return "Пн–Пт";if(mask==96)return "Сб–Вс";val letters=listOf("Пн","Вт","Ср","Чт","Пт","Сб","Вс");return letters.filterIndexed{i,_->(mask and (1 shl i))!=0}.joinToString(" · ")}
  private fun time(m:Int)="%02d:%02d".format(m/60,m%60)
  private fun duration(ms:Long,centis:Boolean=false):String=TimerMath.format(ms,centis)
+ private fun countdown(at:Long):TextView=Ui.text(this,CountdownText.until(at),13f,Ui.blue,true).also{
+  countdownLabels.add(it to at)
+ }
+ private fun enterSelection(id:Int,series:Boolean):Boolean{
+  if(!choosing){choosing=true;selectedAlarms.clear();selectedSeries.clear()}
+  if(series)selectedSeries.add(id)else selectedAlarms.add(id)
+  if(prefs().getBoolean("haptic_buttons",true))body.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+  home()
+  return true
+ }
  private fun updateSelectionButton(){
   val count=selectedAlarms.size+selectedSeries.size
   selectionButton?.text="Удалить выбранные ($count)"
+  selectionButton?.isEnabled=count>0
  }
  private fun resetSelection(){choosing=false;selectedAlarms.clear();selectedSeries.clear();selectionButton=null}
  private fun deleteSelection(all:Boolean){
@@ -209,12 +260,18 @@ class MainActivity:Activity(){
   if(showing)handler.post(clockTick)
   val clock=Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),62f,Ui.WHITE,true).apply{gravity=Gravity.CENTER};clockView=clock
   body.addView(clock);body.addView(Ui.text(this,SimpleDateFormat("EEEE, d MMMM",Locale("ru")).format(Date()),14f,Ui.muted).apply{gravity=Gravity.CENTER});addGap(26)
-  val all=AlarmStore.all(this);val next=all.mapNotNull{a->AlarmStore.nextTime(a)?.let{a to it}}.minByOrNull{it.second}
+  val all=AlarmStore.all(this)
+  val next=AlarmStore.nextUpcoming(this)
   val hero=Ui.card(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TL_BR,intArrayOf(0xe5355074.toInt(),0xf017253e.toInt())).apply{cornerRadius=Ui.dp(this@MainActivity,22).toFloat();setStroke(Ui.dp(this@MainActivity,1),0x776a91c4)}}
   hero.addView(Ui.text(this,"СЛЕДУЮЩИЙ СИГНАЛ",11f,Ui.gold,true));hero.addView(Ui.space(this,11))
-  hero.addView(Ui.text(this,if(next==null) "— : —" else "%02d:%02d".format(next.first.hour,next.first.minute),39f,Ui.WHITE,true))
-  hero.addView(Ui.text(this,next?.first?.title?:"Пока нет активных будильников",14f,Ui.muted))
-  if(next!=null){hero.addView(Ui.space(this,10));hero.addView(small(SimpleDateFormat("EEE, d MMM",Locale("ru")).format(Date(next.second))))}
+  hero.addView(Ui.text(this,if(next==null) "— : —" else SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(next.whenAt)),39f,Ui.WHITE,true))
+  hero.addView(Ui.text(this,next?.alarm?.title?:"Пока нет активных будильников",14f,Ui.muted))
+  if(next!=null){
+   hero.addView(Ui.space(this,9))
+   hero.addView(countdown(next.whenAt))
+   hero.addView(Ui.space(this,8))
+   hero.addView(small(SimpleDateFormat("EEE, d MMM",Locale("ru")).format(Date(next.whenAt))+(if(next.snoozed) " · отложен" else "")))
+  }
   body.addView(hero);addGap(20)
   val manager=getSystemService(AlarmManager::class.java)
   if(Build.VERSION.SDK_INT>=31&&!manager.canScheduleExactAlarms()){
@@ -222,39 +279,47 @@ class MainActivity:Activity(){
   }
   val snoozed=AlarmStore.snoozed(this)
   if(snoozed.isNotEmpty()){section("Отложенные", "${snoozed.size}")
-   snoozed.forEach{(a,until)->val c=Ui.card(this);c.addView(Ui.text(this,a.title,15f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(Ui.text(this,"Повтор в "+SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(until)),15f,Ui.gold));c.addView(Ui.space(this,10));c.addView(Ui.outlineButton(this,"Отменить повтор"){AlarmStore.cancelSnooze(this,a.id);home()});body.addView(c);addGap()}
+   snoozed.forEach{(a,until)->val c=Ui.card(this);c.addView(Ui.text(this,a.title,15f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(Ui.text(this,"Повтор в "+SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(until)),15f,Ui.gold));c.addView(Ui.space(this,6));c.addView(countdown(until));c.addView(Ui.space(this,10));c.addView(Ui.outlineButton(this,"Отменить повтор"){AlarmStore.cancelSnooze(this,a.id);home()});body.addView(c);addGap()}
   }
   val r=Ui.row(this);r.addView(Ui.button(this,"＋ Будильник"){singleEditor(null)},LinearLayout.LayoutParams(0,-2,1f));r.addView(Ui.space(this,10));r.addView(Ui.outlineButton(this,"＋ Серия"){seriesEditor(null)},LinearLayout.LayoutParams(0,-2,1f));body.addView(r);addGap(26)
   val groups=SeriesStore.all(this)
-  if(groups.isNotEmpty()||all.isNotEmpty()){
+  // Management controls stay hidden until the user long-presses an alarm card.
+  if(choosing && (groups.isNotEmpty()||all.isNotEmpty())){
    val manage=Ui.row(this)
-   manage.addView(selectButton(if(choosing)"Готово" else "☑ Выбрать"){
-    if(choosing)resetSelection()else choosing=true
+   manage.addView(selectButton("Готово"){resetSelection();home()},LinearLayout.LayoutParams(0,-2,1f))
+   manage.addView(Ui.space(this,8))
+   manage.addView(selectButton("Выбрать все"){
+    selectedSeries.addAll(groups.map{it.id})
+    selectedAlarms.addAll(all.filter{it.groupId==0}.map{it.id})
     home()
    },LinearLayout.LayoutParams(0,-2,1f))
-   manage.addView(Ui.space(this,8))
-   manage.addView(selectButton("Удалить все"){deleteSelection(true)},LinearLayout.LayoutParams(0,-2,1f))
-   body.addView(manage);addGap(12)
-   if(choosing){
-    val selected=selectedSeries.size+selectedAlarms.size
-    selectionButton=Ui.button(this,"Удалить выбранные ($selected)"){
-     if(selectedAlarms.isNotEmpty()||selectedSeries.isNotEmpty())deleteSelection(false)
-    }
-    body.addView(selectionButton!!);addGap(15)
+   body.addView(manage);addGap(8)
+   val deleteAll=Ui.outlineButton(this,"Удалить все будильники"){deleteSelection(true)}
+   body.addView(deleteAll);addGap(8)
+   val selected=selectedSeries.size+selectedAlarms.size
+   selectionButton=Ui.button(this,"Удалить выбранные ($selected)"){
+    if(selectedAlarms.isNotEmpty()||selectedSeries.isNotEmpty())deleteSelection(false)
    }
+   selectionButton?.isEnabled=selected>0
+   body.addView(selectionButton!!);addGap(17)
   }
-  if(groups.isNotEmpty()){section("Серии", "${groups.size}");groups.forEach{seriesCard(it);addGap()};addGap(12)}
+  if(groups.isNotEmpty()){section("Серии", "${groups.size}");groups.forEach{seriesCard(it,all);addGap()};addGap(12)}
   val singles=all.filter{it.groupId==0}.sortedWith(compareBy({it.hour},{it.minute}))
   section("Отдельные будильники","${singles.size}")
   if(singles.isEmpty()){val c=Ui.card(this);c.addView(Ui.text(this,"Здесь пока пусто",16f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(small("Создай один сигнал или настрой серию для работы, учёбы и других дел."));body.addView(c)}
   singles.forEach{a->singleCard(a);addGap()}
  }
- private fun seriesCard(s:AlarmSeries){
+ private fun seriesCard(s:AlarmSeries,all:List<DAlarm>){
   val c=Ui.card(this);val top=Ui.row(this);val info=Ui.column(this)
   info.addView(Ui.text(this,s.title,19f,Ui.WHITE,true));info.addView(Ui.space(this,5))
   info.addView(Ui.text(this,"${s.labelAt(0)} — ${s.labelAt(s.count-1)}",23f,Ui.gold,true));info.addView(Ui.space(this,5))
   info.addView(small("${s.count} сигналов · каждые ${s.step} мин · ${daysLabel(s.days)}"))
+  if(s.enabled){val nearest=all.asSequence().filter{it.groupId==s.id}.mapNotNull{AlarmStore.nextTime(it)}.minOrNull()
+   if(nearest!=null){info.addView(Ui.space(this,6));info.addView(countdown(nearest))}
+  }
   top.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+  c.isClickable=true;c.isLongClickable=true
+  c.setOnLongClickListener{enterSelection(s.id,true)}
   if(choosing){val box=CheckBox(this).apply{isChecked=s.id in selectedSeries;contentDescription="Выбрать серию ${s.title}"}
    box.setOnCheckedChangeListener{_,on->if(on)selectedSeries.add(s.id)else selectedSeries.remove(s.id);updateSelectionButton()};top.addView(box)
    Ui.interactive(this,c){box.isChecked=!box.isChecked}
@@ -269,7 +334,10 @@ class MainActivity:Activity(){
  }
  private fun singleCard(a:DAlarm){val c=Ui.card(this);val top=Ui.row(this);val info=Ui.column(this)
   info.addView(Ui.text(this,"%02d:%02d".format(a.hour,a.minute),30f,if(a.enabled)Ui.WHITE else Ui.muted,true));info.addView(Ui.space(this,3));info.addView(Ui.text(this,a.title,14f,Ui.gold,true));info.addView(Ui.space(this,5));info.addView(small(daysLabel(a.days)))
+  if(a.enabled){AlarmStore.nextTime(a)?.let{at->info.addView(Ui.space(this,5));info.addView(countdown(at))}}
   top.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+  c.isClickable=true;c.isLongClickable=true
+  c.setOnLongClickListener{enterSelection(a.id,false)}
   if(choosing){val box=CheckBox(this).apply{isChecked=a.id in selectedAlarms;contentDescription="Выбрать ${a.title}"}
    box.setOnCheckedChangeListener{_,on->if(on)selectedAlarms.add(a.id)else selectedAlarms.remove(a.id);updateSelectionButton()};top.addView(box)
    Ui.interactive(this,c){box.isChecked=!box.isChecked}
@@ -382,7 +450,7 @@ class MainActivity:Activity(){
    });addGap(10)
   }
   body.addView(small("На POCO / HyperOS также разреши автозапуск и работу без ограничений батареи. Иначе система может задерживать запуск будильников."));addGap(23)
-  body.addView(small("DARLY 2.6.0 · Time Suite"))
+  body.addView(small("DARLY 2.7.0 · Fluid Motion"))
  }
  private fun themes(){setupScreen("themes","Оформление","Реалистичные пейзажи и авторские игровые арты",true)
   val selected=Ui.selectedTheme(this)

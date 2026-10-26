@@ -1,6 +1,6 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "com.darly.alarm"; compileSdk = 35
- defaultConfig { applicationId = "com.darly.alarm"; minSdk = 26; targetSdk = 35; versionCode = 11; versionName = "2.6.0" }
+ defaultConfig { applicationId = "com.darly.alarm"; minSdk = 26; targetSdk = 35; versionCode = 12; versionName = "2.7.0" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
 }
