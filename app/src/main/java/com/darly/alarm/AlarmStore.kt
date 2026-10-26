@@ -11,8 +11,10 @@ import java.util.Calendar
 data class DAlarm(val id:Int,val hour:Int,val minute:Int,val days:Int,val sound:String,val enabled:Boolean=true,val title:String="Будильник",val vibrate:Boolean=true,val snooze:Int=5,val fade:Int=30)
 object AlarmStore {
  private const val KEY="alarms"
+ const val ACTION_CHANGED="com.darly.alarm.ALARMS_CHANGED"
+ fun notifyChanged(c:Context){c.sendBroadcast(Intent(ACTION_CHANGED).setPackage(c.packageName))}
  fun all(c:Context):List<DAlarm> = try { val arr=JSONArray(c.getSharedPreferences("darly",0).getString(KEY,"[]")); (0 until arr.length()).map { val j=arr.getJSONObject(it); DAlarm(j.getInt("id"),j.getInt("h"),j.getInt("m"),j.getInt("days"),j.optString("sound"),j.optBoolean("enabled",true),j.optString("title","Будильник"),j.optBoolean("vibrate",true),j.optInt("snooze",5),j.optInt("fade",30)) } } catch (_:Exception) { emptyList() }
- fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply() }
+ fun save(c:Context,items:List<DAlarm>) { val a=JSONArray();items.forEach { a.put(JSONObject().put("id",it.id).put("h",it.hour).put("m",it.minute).put("days",it.days).put("sound",it.sound).put("enabled",it.enabled).put("title",it.title).put("vibrate",it.vibrate).put("snooze",it.snooze).put("fade",it.fade)) };c.getSharedPreferences("darly",0).edit().putString(KEY,a.toString()).apply();notifyChanged(c) }
  fun schedule(c:Context,a:DAlarm):Boolean {
   val am=c.getSystemService(AlarmManager::class.java)
   val pi=PendingIntent.getBroadcast(c,a.id,Intent(c,AlarmReceiver::class.java).putExtra("id",a.id),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -25,7 +27,7 @@ object AlarmStore {
  }
  private fun prefs(c:Context)=c.getSharedPreferences("darly_snooze",0)
  fun snoozeUntil(c:Context,id:Int):Long=prefs(c).getLong(id.toString(),0L)
- fun setSnooze(c:Context,id:Int,until:Long){prefs(c).edit().putLong(id.toString(),until).apply()}
+ fun setSnooze(c:Context,id:Int,until:Long){prefs(c).edit().putLong(id.toString(),until).apply();notifyChanged(c)}
  fun clearSnooze(c:Context,id:Int){setSnooze(c,id,0L)}
  fun snoozed(c:Context):List<Pair<DAlarm,Long>> = all(c).mapNotNull { a -> val until=snoozeUntil(c,a.id);if(until>System.currentTimeMillis()) a to until else null }
  fun cancelSnooze(c:Context,id:Int){

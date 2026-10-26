@@ -18,7 +18,7 @@ class RingService:Service(){
   fun active(c:Context):Boolean=c.getSharedPreferences("darly_runtime",0).getBoolean("ringing",false)
   fun activeId(c:Context):Int=c.getSharedPreferences("darly_runtime",0).getInt("id",-1)
  }
- private fun setActive(on:Boolean){getSharedPreferences("darly_runtime",0).edit().putBoolean("ringing",on).putInt("id",if(on)id else -1).commit()}
+ private fun setActive(on:Boolean){getSharedPreferences("darly_runtime",0).edit().putBoolean("ringing",on).putInt("id",if(on)id else -1).commit();AlarmStore.notifyChanged(this)}
  override fun onBind(intent:Intent?)=null
  override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
   when(intent?.action){"STOP"->{stopSelf();return START_NOT_STICKY};"SNOOZE"->{val current=alarm; if(current!=null){val until=System.currentTimeMillis()+current.snooze*60000L;AlarmStore.setSnooze(this,current.id,until);val pi=PendingIntent.getBroadcast(this,current.id xor 0x5A5A5A5A,Intent(this,AlarmReceiver::class.java).putExtra("id",current.id).putExtra("snoozed",true),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE);val am=getSystemService(AlarmManager::class.java);try{am.setAlarmClock(AlarmManager.AlarmClockInfo(until,PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)),pi)}catch(_:Exception){}};stopSelf();return START_NOT_STICKY}}
