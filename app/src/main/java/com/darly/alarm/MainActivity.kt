@@ -245,7 +245,7 @@ class MainActivity:Activity(){
   // Softer vignette for user images preserves contrast and visible photo detail.
   val stops=if(Ui.theme(this)=="Своя фотография")
    intArrayOf(0x7307101c,0xa507121f.toInt(),0xd5070e1b.toInt())
-   else intArrayOf(0x9507101c.toInt(),0xdd07121f.toInt(),0xf5070e1b.toInt())
+   else intArrayOf(0x750b1423.toInt(),0xc70b1423.toInt(),0xf50b1423.toInt())
   val shade=View(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,stops)}
   root.addView(shade,FrameLayout.LayoutParams(-1,-1))
   val frame=Ui.column(this)
@@ -253,12 +253,13 @@ class MainActivity:Activity(){
   if(Build.VERSION.SDK_INT>=30){root.setOnApplyWindowInsetsListener{_,insets->val b=insets.getInsets(WindowInsets.Type.systemBars());frame.setPadding(0,b.top,0,b.bottom);insets}}
   else frame.fitsSystemWindows=true
   val scroll=ScrollView(this).apply{isFillViewport=false;isVerticalScrollBarEnabled=false;clipToPadding=false}
-  body=Ui.column(this);Ui.pad(this,body,19,16);body.setPadding(body.paddingLeft,body.paddingTop,body.paddingRight,Ui.dp(this,34))
+  body=Ui.column(this);Ui.pad(this,body,20,18);body.setPadding(body.paddingLeft,body.paddingTop,body.paddingRight,Ui.dp(this,28))
   scroll.addView(body);frame.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val bar=Ui.row(this)
   if(back){val prev=Ui.text(this,"‹",35f,Ui.WHITE,true)
    prev.setPadding(0,0,Ui.dp(this,18),0);Ui.interactive(this,prev){when(which){"stopwatch","timer_editor"->timersPage();"themes"->settings();"rail_stations"->railPage();"rail_key"->settings();else->home()}};bar.addView(prev)}
-  val heading=Ui.column(this);heading.addView(Ui.text(this,title,if(back)23f else 25f,Ui.WHITE,true))
+  if(which=="home"){bar.addView(ImageView(this).apply{setImageResource(R.drawable.ic_darly_brand);contentDescription=null},LinearLayout.LayoutParams(Ui.dp(this,38),Ui.dp(this,38)));bar.addView(Ui.hspace(this,12))}
+  val heading=Ui.column(this);heading.addView(Ui.text(this,title,if(back)23f else 28f,Ui.WHITE,true))
   if(subtitle.isNotBlank()){heading.addView(Ui.space(this,4));heading.addView(Ui.text(this,subtitle,12f,Ui.muted))}
   bar.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
   if(!back && !(which=="rail" && railKey().isBlank())){
@@ -273,7 +274,7 @@ class MainActivity:Activity(){
    Ui.interactive(this,timer){timersPage()};bar.addView(timer,LinearLayout.LayoutParams(Ui.dp(this,52),Ui.dp(this,52)))
 
   }
-  body.addView(bar);body.addView(Ui.space(this,23))
+  body.addView(bar);body.addView(Ui.space(this,24))
   if(which=="home"||which=="presets"||which=="rail"||which=="settings")frame.addView(bottomNavigation(which))
   // No overlapping full-screen roots: they caused moving nav bars and jumpy status insets.
   // Animate only opacity of the incoming content; the wallpaper never translates.
@@ -302,17 +303,23 @@ class MainActivity:Activity(){
   return super.dispatchTouchEvent(ev)
  }
  private fun bottomNavigation(active:String):LinearLayout{
-  val nav=Ui.row(this).apply{setBackgroundColor(0xf209111e.toInt());setPadding(Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8),Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8))}
+  val nav=Ui.row(this).apply{
+   background=Ui.shape(0xf2142030.toInt(),Ui.dp(this@MainActivity,26).toFloat(),0x3d70869e)
+   setPadding(Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6))
+   layoutParams=LinearLayout.LayoutParams(-1,-2).apply{setMargins(Ui.dp(this@MainActivity,14),0,Ui.dp(this@MainActivity,14),Ui.dp(this@MainActivity,10))}
+  }
   listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("rail",R.drawable.ic_rail_nav,"Электрички"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
-   val item=Ui.column(this).apply{gravity=Gravity.CENTER;contentDescription=label}
+   val item=Ui.column(this).apply{gravity=Gravity.CENTER;contentDescription=label;isSelected=key==active
+    if(key==active)background=Ui.shape((0x24 shl 24) or (Ui.blue and 0xffffff),Ui.dp(this@MainActivity,21).toFloat())
+   }
    val icon=ImageView(this).apply{
     setImageResource(iconId)
     imageTintList=ColorStateList.valueOf(if(key==active)Ui.blue else Ui.muted)
     scaleType=ImageView.ScaleType.FIT_CENTER
     contentDescription=null
    }
-   item.addView(icon,LinearLayout.LayoutParams(Ui.dp(this,28),Ui.dp(this,28)))
-   item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,12f,if(key==active)Ui.blue else Ui.muted).apply{gravity=Gravity.CENTER})
+   item.addView(icon,LinearLayout.LayoutParams(Ui.dp(this,24),Ui.dp(this,24)))
+   item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,11f,if(key==active)Ui.blue else Ui.muted,key==active).apply{gravity=Gravity.CENTER})
    Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();"rail"->railPage();else->settings()}}
    nav.addView(item,LinearLayout.LayoutParams(0,Ui.dp(this,64),1f))
   }
@@ -352,11 +359,11 @@ class MainActivity:Activity(){
  private fun addGap(h:Int=13){body.addView(Ui.space(this,h))}
  private fun home(){setupScreen("home","DARLY","Твой ритм. Твоё утро.")
   if(showing)handler.post(clockTick)
-  val clock=Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),62f,Ui.WHITE,true).apply{gravity=Gravity.CENTER};clockView=clock
+  val clock=Ui.text(this,SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date()),58f,Ui.WHITE).apply{gravity=Gravity.CENTER;letterSpacing=.01f};clockView=clock
   body.addView(clock);body.addView(Ui.text(this,SimpleDateFormat("EEEE, d MMMM",Locale("ru")).format(Date()),14f,Ui.muted).apply{gravity=Gravity.CENTER});addGap(26)
   val all=AlarmStore.all(this)
   val next=AlarmStore.nextUpcoming(this)
-  val hero=Ui.card(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TL_BR,intArrayOf(0xe5355074.toInt(),0xf017253e.toInt())).apply{cornerRadius=Ui.dp(this@MainActivity,22).toFloat();setStroke(Ui.dp(this@MainActivity,1),0x776a91c4)}}
+  val hero=Ui.card(this).apply{background=GradientDrawable(GradientDrawable.Orientation.TL_BR,intArrayOf(0xe52a4057.toInt(),0xf2142334.toInt())).apply{cornerRadius=Ui.dp(this@MainActivity,28).toFloat();setStroke(Ui.dp(this@MainActivity,1),0x5579a5b9)}}
   hero.addView(Ui.text(this,"СЛЕДУЮЩИЙ СИГНАЛ",11f,Ui.gold,true));hero.addView(Ui.space(this,11))
   hero.addView(Ui.text(this,if(next==null) "— : —" else SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(next.whenAt)),39f,Ui.WHITE,true))
   hero.addView(Ui.text(this,next?.alarm?.title?:"Пока нет активных будильников",14f,Ui.muted))
@@ -558,7 +565,7 @@ class MainActivity:Activity(){
     try{startActivity(Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",android.net.Uri.parse("package:$packageName")))}catch(_:Exception){Toast.makeText(this,"Открой разрешения DARLY в настройках системы",Toast.LENGTH_LONG).show()}
    });addGap(10)
   }
-  body.addView(small("DARLY 3.1.0"))
+  body.addView(small("DARLY "+runCatching{packageManager.getPackageInfo(packageName,0).versionName}.getOrNull().orEmpty()))
  }
  private fun themes(){setupScreen("themes","Оформление","Сезоны и собственные фотографии",true)
   body.addView(Ui.button(this,"＋  Выбрать фотографию из галереи"){chooseWallpaper()});addGap(13)
@@ -569,7 +576,7 @@ class MainActivity:Activity(){
    val c=Ui.card(this)
    val preview=ImageView(this).apply{
     setImageDrawable(if(name=="Своя фотография")Ui.customWallpaper(this@MainActivity) else resources.getDrawable(when(name){
-     "Весна"->R.drawable.darly_spring;"Лето"->R.drawable.darly_summer;"Осень"->R.drawable.darly_autumn;"Зима"->R.drawable.darly_winter;else->Ui.background(this@MainActivity)
+     "Весна"->R.drawable.darly_spring_v2;"Лето"->R.drawable.darly_summer_v2;"Осень"->R.drawable.darly_autumn_v2;"Зима"->R.drawable.darly_winter_v2;else->Ui.background(this@MainActivity)
     },theme));scaleType=ImageView.ScaleType.CENTER_CROP
    }
    c.addView(preview,LinearLayout.LayoutParams(-1,Ui.dp(this,155)));c.addView(Ui.space(this,12))
@@ -591,13 +598,12 @@ class MainActivity:Activity(){
  }
  private fun railStationField(title:String,station:YandexRaspApi.Station?,onClick:()->Unit):LinearLayout{
   val box=Ui.column(this).apply{
-   background=Ui.shape(0xd01d2b40.toInt(),Ui.dp(this@MainActivity,14).toFloat(),0x55678094)
-   setPadding(Ui.dp(this@MainActivity,12),Ui.dp(this@MainActivity,11),Ui.dp(this@MainActivity,12),Ui.dp(this@MainActivity,11))
-   minimumHeight=Ui.dp(this@MainActivity,59)
+   setPadding(Ui.dp(this@MainActivity,4),Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8),Ui.dp(this@MainActivity,10))
+   minimumHeight=Ui.dp(this@MainActivity,64)
   }
   box.addView(Ui.text(this,title,10f,Ui.muted,true));box.addView(Ui.space(this,5))
-  box.addView(Ui.text(this,station?.title?:"Выбрать станцию",14f,Ui.WHITE,true).apply{
-   maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
+  box.addView(Ui.text(this,station?.title?:"Выбрать станцию",16f,if(station==null)Ui.muted else Ui.WHITE,true).apply{
+   maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
   })
   Ui.interactive(this,box,onClick)
   return box
@@ -625,16 +631,18 @@ class MainActivity:Activity(){
   // Official API does not have name autocomplete: prepare a compact local index
   // automatically once, streaming the full upstream data without keeping JSON in RAM.
   RailCatalogLoader.ensure(applicationContext,railKey())
-  section("Маршрут")
+  val routeCard=Ui.card(this)
   val route=Ui.row(this)
-  route.addView(railStationField("ОТКУДА",railFrom){railStationPicker(true)},LinearLayout.LayoutParams(0,-2,1f))
-  route.addView(railMini("⇄"){
+  val fields=Ui.column(this)
+  fields.addView(railStationField("ОТКУДА",railFrom){railStationPicker(true)})
+  fields.addView(Ui.divider(this))
+  fields.addView(railStationField("КУДА",railTo){railStationPicker(false)})
+  route.addView(fields,LinearLayout.LayoutParams(0,-2,1f))
+  route.addView(Ui.hspace(this,12))
+  route.addView(railMini("⇅"){
    val old=railFrom;railFrom=railTo;railTo=old;saveRailSelection();railResetResults();railPage()
-  },LinearLayout.LayoutParams(Ui.dp(this,42),Ui.dp(this,48)).apply{
-   marginStart=Ui.dp(this@MainActivity,6);marginEnd=Ui.dp(this@MainActivity,6)
-  })
-  route.addView(railStationField("КУДА",railTo){railStationPicker(false)},LinearLayout.LayoutParams(0,-2,1f))
-  body.addView(route);addGap(10)
+  }.apply{contentDescription="Поменять станции местами"},LinearLayout.LayoutParams(Ui.dp(this,48),Ui.dp(this,48)))
+  routeCard.addView(route);body.addView(routeCard);addGap(14)
   val controls=Ui.row(this)
   val dateTitle=runCatching{java.time.LocalDate.parse(railDate).format(java.time.format.DateTimeFormatter.ofPattern("d MMM",Locale("ru")))}.getOrDefault(railDate)
   controls.addView(railMini("▦  $dateTitle"){
@@ -698,19 +706,11 @@ class MainActivity:Activity(){
   if(railTrains.isNotEmpty()){
    section("Отправления","${railTrains.size} из $railSearchTotal")
    railTrains.forEach{train->
-    val card=Ui.column(this).apply{
-     background=Ui.shape(Ui.card,Ui.dp(this@MainActivity,15).toFloat(),0x447d91ac)
-     setPadding(Ui.dp(this@MainActivity,13),Ui.dp(this@MainActivity,11),Ui.dp(this@MainActivity,13),Ui.dp(this@MainActivity,11))
+    val card=RailTrainCard.create(this,train){
+     val from=railFrom;val to=railTo
+     if(from!=null&&to!=null)TrainDetailActivity.open(this,train,from,to,railDate)
     }
-    val row=Ui.row(this)
-    row.addView(Ui.text(this,train.labelTime,21f,Ui.WHITE,true))
-    row.addView(Ui.text(this,"  →  ",15f,Ui.muted))
-    row.addView(Ui.text(this,train.arrivalTime,20f,Ui.WHITE,true))
-    card.addView(row);card.addView(Ui.space(this,5))
-    val description=listOf(train.number.takeIf{it.isNotBlank()}?.let{"№ $it"},train.title.takeIf{it.isNotBlank()},
-     train.durationSeconds.takeIf{it>0}?.let{"${it/60} мин"}).filterNotNull().joinToString(" · ")
-    card.addView(Ui.text(this,description.ifBlank{"Электричка"},12f,Ui.muted))
-    body.addView(card);addGap(8)
+    body.addView(card);addGap(12)
    }
    if(railNextOffset<railSearchTotal){body.addView(railMini("Показать следующие"){
     if(!railLoading)railSearch(true)

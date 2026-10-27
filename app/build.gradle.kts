@@ -1,8 +1,9 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "com.darly.alarm"; compileSdk = 35
- defaultConfig { applicationId = "com.darly.alarm"; minSdk = 26; targetSdk = 35; versionCode = 17; versionName = "3.1.1"; testInstrumentationRunner = "com.darly.alarm.RailSmokeInstrumentation"; resValue("string","app_name","DARLY") }
+ defaultConfig { applicationId = "com.darly.alarm"; minSdk = 26; targetSdk = 35; versionCode = 18; versionName = "3.2.0"; testInstrumentationRunner = "com.darly.alarm.RailSmokeInstrumentation"; resValue("string","app_name","DARLY") }
  testBuildType = "qa"
  buildTypes { create("qa") { initWith(getByName("debug")); applicationIdSuffix = ".qa"; versionNameSuffix = "-qa"; resValue("string","app_name","DARLY QA") } }
+ sourceSets.getByName("qa").java.srcDir("src/androidTest/java")
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
 }

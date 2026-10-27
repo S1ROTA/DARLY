@@ -11,6 +11,9 @@ class RailSmokeInstrumentation:Instrumentation(){
   val output=Bundle()
   try{
    check(targetContext.packageName.endsWith(".qa")){"Smoke checks require isolated QA package"}
+   targetContext.getSharedPreferences("rail_schedules",0).edit().remove("selected_from").remove("selected_to").commit()
+   check(YandexRaspApi.readFares(org.json.JSONObject("""{"places":[{"name":null,"currency":"RUB","price":{"whole":139,"cents":5}}]}""")).single().label=="139,05 ₽"){"Fare JSON lost minor units"}
+   check(YandexRaspApi.readFares(null).isEmpty()){"Missing fare became a made-up price"}
    val fixture="""{"countries":[{"regions":[{"settlements":[{"stations":[{"codes":{"yandex_code":"s1000"},"title":"Орёл","transport_type":"train"},{"title":"Платформа","transport_type":"suburban","codes":{"yandex_code":"s1001"}},{"title":"Автобус","transport_type":"bus","codes":{"yandex_code":"s1002"}}],"title":"Город"}],"title":"Область"}]}]}"""
    val stations=YandexRaspApi.readStations(fixture.reader())
    check(stations.size==2){"Rail catalog dropped train station or accepted a bus"}
@@ -58,25 +61,33 @@ class RailSmokeInstrumentation:Instrumentation(){
    val selection=targetContext.getSharedPreferences("rail_schedules",0)
    check(selection.getString("selected_from","")!!.contains("s1000")){"Origin selection was not persisted"}
    check(selection.getString("selected_to","")!!.contains("s1001")){"Destination selection was not persisted"}
-   runOnMainSync{activity.finish()};waitForIdleSync()
-   activity=startActivitySync(launch);waitForIdleSync()
+   val restoreMonitor=addMonitor(MainActivity::class.java.name,null,false)
+   runOnMainSync{activity.recreate()}
+   activity=waitForMonitorWithTimeout(restoreMonitor,10000)?:error("Activity did not recreate")
+   removeMonitor(restoreMonitor);waitForIdleSync()
    click("Электрички")
    runOnMainSync{
     val texts=views(activity.window.decorView).filterIsInstance<android.widget.TextView>().map{it.text.toString()}
     check("Орёл" in texts && "Платформа" in texts){"Route lost after reopening"}
    }
-   runOnMainSync{activity.finish()};waitForIdleSync()
    // Leave QA with the real catalog when a diagnostic fixture was supplied.
    if(real.isFile){RailStationCache.replace(targetContext,real.reader(Charsets.UTF_8).use{YandexRaspApi.readStations(it)})}
    selection.edit().remove("selected_from").remove("selected_to").commit()
    if(real.isFile){
-    activity=startActivitySync(launch);waitForIdleSync();click("Электрички")
-    click("Выбрать станцию");query("москва ярославский")
+    click("Электрички")
+    click(stations[0].title);query("москва ярославский")
     val origin=RailStationCache.all(targetContext).first{it.code=="s2000002"}
     click(origin.label)
-    click("Выбрать станцию");query("мытищи")
+    click(stations[1].title);query("мытищи")
     val destination=RailStationCache.find(RailStationCache.all(targetContext),"мытищи").first{it.code=="s9600681"}
     click(destination.label)
+    // Test a future service: historical departures may legitimately omit fares.
+    // Fixture setup stays inside the isolated QA process.
+    runOnMainSync{
+     MainActivity::class.java.getDeclaredField("railDate").apply{isAccessible=true}
+      .set(activity,java.time.LocalDate.now().plusDays(1).toString())
+    }
+    click("Электрички")
     click("Найти электрички")
     val deadline=android.os.SystemClock.elapsedRealtime()+45000
     var complete=false
@@ -91,8 +102,33 @@ class RailSmokeInstrumentation:Instrumentation(){
      java.io.File(targetContext.filesDir,"qa-schedule.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
      bitmap.recycle()
     }
+    val monitor=addMonitor(TrainDetailActivity::class.java.name,null,false)
+    click("Остановки и цена  ›")
+    activity=waitForMonitorWithTimeout(monitor,10000)?:error("Trip details did not open")
+    removeMonitor(monitor);waitForIdleSync()
+    val stopDeadline=android.os.SystemClock.elapsedRealtime()+45000
+    var stopsReady=false
+    while(android.os.SystemClock.elapsedRealtime()<stopDeadline && !stopsReady){
+     waitForIdleSync()
+     runOnMainSync{stopsReady=views(activity.window.decorView).filterIsInstance<android.widget.TextView>().any{it.text.toString()=="Выход"}}
+     if(!stopsReady)Thread.sleep(250)
+    }
+    check(stopsReady){"Trip stops did not load"}
+    var detailTexts=emptyList<String>()
+    runOnMainSync{detailTexts=views(activity.window.decorView).filterIsInstance<android.widget.TextView>().map{it.text.toString()}}
+    check("СТОИМОСТЬ ПРОЕЗДА" in detailTexts && "Посадка" in detailTexts && "Выход" in detailTexts){"Fare or selected segment missing"}
+    // Window transitions run outside the main message queue's idle state.
+    Thread.sleep(650)
+    uiAutomation.takeScreenshot()?.let{bitmap->
+     java.io.File(targetContext.filesDir,"qa-trip.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+    }
+    check(detailTexts.any{Regex("[0-9]+(?:,[0-9]+)? ₽").containsMatchIn(it)}){"Live fare missing from future trip details"}
+    var entire=""
+    runOnMainSync{entire=views(activity.window.decorView).filterIsInstance<android.widget.TextView>().first{it.text.toString().startsWith("Показать весь маршрут")}.text.toString()}
+    click(entire)
+    runOnMainSync{check(views(activity.window.decorView).filterIsInstance<android.widget.TextView>().any{it.text.toString()=="Весь маршрут"}){"Full route toggle failed"}}
    }
-   output.putString("stream","Rail parser, region metadata, search and cache checks passed\n")
+   output.putString("stream","Rail parser, search, cache, selection, live fares and trip stops checks passed\n")
    finish(Activity.RESULT_OK,output)
   }catch(e:Exception){output.putString("stream","FAILED: ${e.message}\n");finish(Activity.RESULT_CANCELED,output)}
  }

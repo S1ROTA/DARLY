@@ -87,7 +87,7 @@ object Ui {
  val WHITE=0xfff4f7fc.toInt()
  fun selectedTheme(c:Context)=c.getSharedPreferences("darly",0).getString("theme","Сезонная")?:"Сезонная"
  fun theme(c:Context):String {val t=selectedTheme(c);if(t!="Сезонная")return t;return when(Calendar.getInstance().get(Calendar.MONTH)){11,0,1->"Зима";2,3,4->"Весна";5,6,7->"Лето";else->"Осень"}}
- fun background(c:Context):Int=when(theme(c)){"Deadlock"->R.drawable.darly_deadlock;"Minecraft"->R.drawable.darly_minecraft;"Весна"->R.drawable.darly_spring;"Лето"->R.drawable.darly_summer;"Осень"->R.drawable.darly_autumn;"Зима"->R.drawable.darly_winter;else->R.drawable.darly_neo}
+ fun background(c:Context):Int=when(theme(c)){"Deadlock"->R.drawable.darly_deadlock;"Minecraft"->R.drawable.darly_minecraft;"Весна"->R.drawable.darly_spring_v2;"Лето"->R.drawable.darly_summer_v2;"Осень"->R.drawable.darly_autumn_v2;"Зима"->R.drawable.darly_winter_v2;else->R.drawable.darly_neo}
  fun applyTheme(c:Context){when(theme(c)){
   "Своя фотография"->{
    bg=0xff101724.toInt();card=0xe8172435.toInt();blue=0xff91bce8.toInt();gold=0xffe7c79e.toInt();muted=0xffbccbd7.toInt()
@@ -115,10 +115,10 @@ object Ui {
   }
   "Deadlock"->{bg=0xff11141b.toInt();card=0xe81b242d.toInt();blue=0xffd1a56d.toInt();gold=0xffebc38a.toInt();muted=0xffb8b8bb.toInt()}
   "Minecraft"->{bg=0xff101c18.toInt();card=0xe8192924.toInt();blue=0xff8dca9f.toInt();gold=0xffe2c486.toInt();muted=0xffabc3b8.toInt()}
-  "Весна"->{bg=0xff171828.toInt();card=0xe8212437.toInt();blue=0xffb9b1ee.toInt();gold=0xffffcdb1.toInt();muted=0xffc3becf.toInt()}
-  "Лето"->{bg=0xff0b1d29.toInt();card=0xe8122c3b.toInt();blue=0xff89d9e6.toInt();gold=0xffffdb95.toInt();muted=0xffb1cedc.toInt()}
-  "Осень"->{bg=0xff1d1720.toInt();card=0xe829222c.toInt();blue=0xffeeb17a.toInt();gold=0xffffd4a0.toInt();muted=0xffd0bcb2.toInt()}
-  "Зима"->{bg=0xff10192d.toInt();card=0xe818293c.toInt();blue=0xff92bfff.toInt();gold=0xffd9e9fc.toInt();muted=0xffb6cadd.toInt()}
+  "Весна"->{bg=0xff111625.toInt();card=0xeb182031.toInt();blue=0xffc6c0f4.toInt();gold=0xffedd0bc.toInt();muted=0xffbac5d5.toInt()}
+  "Лето"->{bg=0xff0b1522.toInt();card=0xeb132534.toInt();blue=0xff9cddd3.toInt();gold=0xffefd1a6.toInt();muted=0xffadc6d3.toInt()}
+  "Осень"->{bg=0xff101724.toInt();card=0xeb1d2634.toInt();blue=0xffe9c49f.toInt();gold=0xfff0d2b5.toInt();muted=0xffbac5d2.toInt()}
+  "Зима"->{bg=0xff0b1423.toInt();card=0xeb152438.toInt();blue=0xffb2d5ef.toInt();gold=0xffe2d9f0.toInt();muted=0xffb7c8dc.toInt()}
   else->{bg=0xff080f1b.toInt();card=0xe8172334.toInt();blue=0xff75a6ff.toInt();gold=0xffe3bd80.toInt();muted=0xffaab9ca.toInt()}
  }}
  fun animateWallpaper(c:Context,image:android.widget.ImageView){
@@ -129,16 +129,22 @@ object Ui {
   val end=if(custom)1.045f else 1.10f
   image.scaleX=begin;image.scaleY=begin
   image.animate().cancel()
-  image.animate().scaleX(end).scaleY(end).setDuration(28000L)
-   .setInterpolator(LinearInterpolator()).withEndAction{
-    if(image.isAttachedToWindow)image.animate().scaleX(begin).scaleY(begin).setDuration(28000L).start()
-   }.start()
+  val pulse=ValueAnimator.ofFloat(begin,end).apply{
+   duration=28000L;repeatCount=ValueAnimator.INFINITE;repeatMode=ValueAnimator.REVERSE;interpolator=LinearInterpolator()
+   addUpdateListener{val value=it.animatedValue as Float;image.scaleX=value;image.scaleY=value}
+  }
+  image.addOnAttachStateChangeListener(object:View.OnAttachStateChangeListener{
+   override fun onViewAttachedToWindow(v:View){pulse.start()}
+   override fun onViewDetachedFromWindow(v:View){pulse.cancel();image.removeOnAttachStateChangeListener(this)}
+  })
+  if(image.isAttachedToWindow)pulse.start()
  }
  fun dp(c:Context,n:Int)=(n*c.resources.displayMetrics.density+.5f).toInt()
  fun shape(color:Int,r:Float=20f,stroke:Int?=null)=GradientDrawable().apply{setColor(color);cornerRadius=r;if(stroke!=null)setStroke(1,stroke)}
  fun text(c:Context,s:String,size:Float=16f,color:Int=WHITE,bold:Boolean=false)=TextView(c).apply{
   text=s;textSize=size;setTextColor(color);gravity=Gravity.CENTER_VERTICAL;includeFontPadding=false
-  if(bold)typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+  typeface=Typeface.create(if(bold)"sans-serif-medium" else "sans-serif",Typeface.NORMAL)
+  if(size>=28)fontFeatureSettings="tnum"
  }
  fun column(c:Context)=LinearLayout(c).apply{orientation=LinearLayout.VERTICAL}
  fun row(c:Context)=LinearLayout(c).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
@@ -179,16 +185,23 @@ object Ui {
   }
   v.setOnClickListener{feedback(c,v);action()}
  }
- fun button(c:Context,s:String,action:()->Unit)=text(c,s,15f,0xff08111f.toInt(),true).apply{
-  gravity=Gravity.CENTER;background=shape(blue,dp(c,17).toFloat());setPadding(dp(c,15),dp(c,14),dp(c,15),dp(c,14));minHeight=dp(c,54)
+ fun button(c:Context,s:String,action:()->Unit)=text(c,s,15f,0xff0b1423.toInt(),true).apply{
+  gravity=Gravity.CENTER
+  val states=android.graphics.drawable.StateListDrawable().apply{
+   addState(intArrayOf(-android.R.attr.state_enabled),shape(0xff263447.toInt(),dp(c,18).toFloat()))
+   addState(intArrayOf(),shape(blue,dp(c,18).toFloat()))
+  }
+  background=android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x25ffffff),states,null)
+  setTextColor(ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled),intArrayOf()),intArrayOf(muted,0xff0b1423.toInt())))
+  setPadding(dp(c,18),dp(c,16),dp(c,18),dp(c,16));minHeight=dp(c,56)
   interactive(c,this,action)
  }
  fun outlineButton(c:Context,s:String,action:()->Unit)=text(c,s,15f,WHITE,true).apply{
-  gravity=Gravity.CENTER;background=shape(0xc81d2b40.toInt(),dp(c,16).toFloat(),0x56678094);setPadding(dp(c,15),dp(c,14),dp(c,15),dp(c,14));minHeight=dp(c,54)
+  gravity=Gravity.CENTER;background=android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x20ffffff),shape(0xd51b2a3b.toInt(),dp(c,18).toFloat(),0x405e7894),null);setPadding(dp(c,18),dp(c,16),dp(c,18),dp(c,16));minHeight=dp(c,56)
   interactive(c,this,action)
  }
  fun card(c:Context)=column(c).apply{
-  background=shape(card,dp(c,20).toFloat(),0x4d7d91ac);elevation=dp(c,3).toFloat();pad(c,this,17,17)
+  background=shape(card,dp(c,24).toFloat(),0x395e7894);elevation=dp(c,2).toFloat();pad(c,this,18,18)
  }
  fun switch(c:Context,on:Boolean)=Switch(c).apply{
   setOnTouchListener{v,event->if(event.actionMasked==MotionEvent.ACTION_UP)feedback(c,v);false}

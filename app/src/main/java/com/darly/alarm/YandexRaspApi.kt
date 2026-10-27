@@ -16,13 +16,22 @@ object YandexRaspApi {
  const val ATTRIBUTION="Данные предоставлены сервисом Яндекс.Расписания"
  const val ATTRIBUTION_URL="https://rasp.yandex.ru/"
  private const val REFERRER="http://com.darly.alarm.yraspapp"
- data class Station(val code:String,val title:String,val settlement:String="",val region:String=""){
+ data class Station(val code:String,val title:String,val settlement:String="",val region:String=""):java.io.Serializable{
   val label:String get()=listOf(title,settlement,region).filter{it.isNotBlank()}.distinct().joinToString(" · ")
  }
- data class Train(val number:String,val title:String,val departure:String,val arrival:String?,val departureAt:Long,val durationSeconds:Int){
+ data class Train(val number:String,val title:String,val departure:String,val arrival:String?,val departureAt:Long,val durationSeconds:Int,
+  val uid:String="",val startDate:String="",val fares:List<RailFare> = emptyList(),val carrier:String="",val platform:String="",val stopsSummary:String=""):java.io.Serializable{
   val labelTime:String get()=runCatching {OffsetDateTime.parse(departure).format(DateTimeFormatter.ofPattern("HH:mm"))}.getOrElse {departure.takeLast(5)}
   val arrivalTime:String get()=arrival?.let {runCatching {OffsetDateTime.parse(it).format(DateTimeFormatter.ofPattern("HH:mm"))}.getOrNull()} ?: "—"
+  val fareLabel:String get(){
+   if(fares.isEmpty())return "Цена не указана"
+   val group=fares.filter{it.currency=="RUB"}.ifEmpty{fares.filter{it.currency==fares.first().currency}}
+   val min=group.minByOrNull{it.minorUnits}?:return "Цена не указана"
+   return (if(group.size>1)"от " else "")+min.label
+  }
  }
+ data class Stop(val code:String,val title:String,val arrival:String?,val departure:String?,val platform:String):java.io.Serializable
+ data class Journey(val title:String,val carrier:String,val stops:List<Stop>):java.io.Serializable
  data class Search(val trains:List<Train>,val total:Int,val offset:Int,val intervalCount:Int)
  class RequestFailure(message:String):Exception(message)
 
@@ -76,10 +85,33 @@ object YandexRaspApi {
    val instant=runCatching{OffsetDateTime.parse(departure).toInstant().toEpochMilli()}.getOrNull()?:continue
    val thread=s.optJSONObject("thread")
    trains.add(Train(thread?.optString("number").orEmpty(),thread?.optString("title").orEmpty(),departure,
-    s.optString("arrival").takeIf{it.isNotBlank()&&it!="null"},instant,s.optInt("duration",0)))
+    s.optString("arrival").takeIf{it.isNotBlank()&&it!="null"},instant,s.optInt("duration",0),
+    thread?.optString("uid").orEmpty(),s.optString("start_date",date),readFares(s.optJSONObject("tickets_info")),
+    thread?.optJSONObject("carrier")?.optString("title").orEmpty(),s.optString("departure_platform").takeUnless{it=="null"}.orEmpty(),
+    s.optString("stops").takeUnless{it=="null"}.orEmpty()))
   }
   val intervalCount=result.optJSONArray("interval_segments")?.length()?:0
   return Search(trains.sortedBy{it.departureAt},pagination?.optInt("total",trains.size)?:trains.size,offset,intervalCount)
+ }
+ internal fun readFares(info:JSONObject?):List<RailFare>{
+  val places=info?.optJSONArray("places")?:return emptyList()
+  return (0 until places.length()).mapNotNull{i->
+   val p=places.optJSONObject(i)?:return@mapNotNull null
+   val amount=p.optJSONObject("price")?:return@mapNotNull null
+   RailJourneyRules.fare(p.optString("name").takeUnless{it=="null"}.orEmpty(),p.optString("currency"),amount.optLong("whole",-1),amount.optInt("cents",0))
+  }.distinct()
+ }
+ fun journey(apiKey:String,train:Train,from:Station,to:Station,date:String):Journey {
+  if(train.uid.isBlank())throw RequestFailure("Для этого рейса Яндекс не передал список остановок")
+  val data=getJson("thread/",apiKey,mapOf("uid" to train.uid,"date" to train.startDate.ifBlank{date},"from" to from.code,"to" to to.code))
+  val stops=data.optJSONArray("stops")
+  val list=if(stops==null)emptyList()else (0 until stops.length()).mapNotNull{i->
+   val s=stops.optJSONObject(i)?:return@mapNotNull null
+   val station=s.optJSONObject("station")?:return@mapNotNull null
+   fun value(key:String)=s.optString(key).takeIf{it.isNotBlank()&&it!="null"}
+   Stop(station.optString("code"),station.optString("title"),value("arrival"),value("departure"),value("platform").orEmpty())
+  }
+  return Journey(data.optString("title",train.title),data.optJSONObject("carrier")?.optString("title").orEmpty(),list)
  }
  /** Stations list can be ~40 MB. It is parsed streaming without a 40 MB string/JSON object. */
  fun loadStations(apiKey:String,onProgress:(Long)->Unit={}):List<Station> {

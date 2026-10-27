@@ -1,0 +1,10 @@
+<resources>
+    <style name="DarlyTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">#9CDDD3</item>
+        <item name="android:windowBackground">#0B1423</item>
+        <item name="android:navigationBarColor">#0B1423</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

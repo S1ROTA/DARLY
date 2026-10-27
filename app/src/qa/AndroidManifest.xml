@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Runs only inside the isolated, debuggable QA application. -->
+    <instrumentation android:name="com.darly.alarm.RailSmokeInstrumentation"
+        android:targetPackage="com.darly.alarm.qa" android:label="DARLY QA checks" />
+</manifest>
