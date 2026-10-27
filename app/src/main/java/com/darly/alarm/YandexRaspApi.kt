@@ -16,8 +16,8 @@ object YandexRaspApi {
  const val ATTRIBUTION="Данные предоставлены сервисом Яндекс.Расписания"
  const val ATTRIBUTION_URL="https://rasp.yandex.ru/"
  private const val REFERRER="http://com.darly.alarm.yraspapp"
- data class Station(val code:String,val title:String,val settlement:String=""){
-  val label:String get()=if(settlement.isNotEmpty() && settlement!=title)"$title · $settlement" else title
+ data class Station(val code:String,val title:String,val settlement:String="",val region:String=""){
+  val label:String get()=listOf(title,settlement,region).filter{it.isNotBlank()}.distinct().joinToString(" · ")
  }
  data class Train(val number:String,val title:String,val departure:String,val arrival:String?,val departureAt:Long,val durationSeconds:Int){
   val labelTime:String get()=runCatching {OffsetDateTime.parse(departure).format(DateTimeFormatter.ofPattern("HH:mm"))}.getOrElse {departure.takeLast(5)}
@@ -28,7 +28,7 @@ object YandexRaspApi {
 
  private fun enc(value:String)=URLEncoder.encode(value,"UTF-8")
  private fun connection(url:String,apiKey:String):HttpURLConnection {
-  require(apiKey.isNotBlank()){"Нужен ключ Яндекс Расписаний"}
+  RailInputRules.apiKeyError(apiKey)?.let{throw RequestFailure(it)}
   val con=URL(url).openConnection() as HttpURLConnection
   con.requestMethod="GET"
   con.connectTimeout=12000
@@ -58,7 +58,8 @@ object YandexRaspApi {
     JSONObject(content)
    }
   }catch(e:RequestFailure){throw e}
-   catch(e:Exception){throw RequestFailure("Не удалось получить расписание: ${e.message ?: "ошибка сети"}")}
+   catch(e:java.net.SocketTimeoutException){throw RequestFailure("Сервер не ответил вовремя. Повтори поиск.")}
+   catch(e:Exception){throw RequestFailure("Не удалось получить расписание. Проверь соединение и повтори поиск.")}
   finally{con.disconnect()}
  }
  fun search(apiKey:String,origin:Station,destination:Station,date:String,offset:Int=0):Search {
@@ -81,15 +82,26 @@ object YandexRaspApi {
   return Search(trains.sortedBy{it.departureAt},pagination?.optInt("total",trains.size)?:trains.size,offset,intervalCount)
  }
  /** Stations list can be ~40 MB. It is parsed streaming without a 40 MB string/JSON object. */
- fun loadStations(apiKey:String):List<Station> {
+ fun loadStations(apiKey:String,onProgress:(Long)->Unit={}):List<Station> {
   val con=connection(BASE+"stations_list/?format=json&lang=ru_RU",apiKey)
   try{
-   val found=LinkedHashMap<String,Station>()
-   open(con).use{stream->InputStreamReader(stream,Charsets.UTF_8).use{reader->
-    JsonReader(reader).use{json->parseRoot(json,found)}
+   var stations:List<Station> = emptyList()
+   open(con).use{stream->
+    val counted=object:java.io.FilterInputStream(stream){
+     private var bytes=0L
+     override fun read():Int=super.read().also{if(it>=0){bytes++;onProgress(bytes)}}
+     override fun read(b:ByteArray,off:Int,len:Int):Int=stream.read(b,off,len).also{if(it>0){bytes+=it;onProgress(bytes)}}
+    }
+    InputStreamReader(counted,Charsets.UTF_8).use{reader->
+    stations=readStations(reader)
    }}
-   return found.values.toList()
+   return stations
   }finally{con.disconnect()}
+ }
+ internal fun readStations(reader:java.io.Reader):List<Station>{
+  val found=LinkedHashMap<String,Station>()
+  JsonReader(reader).use{json->parseRoot(json,found)}
+  return found.values.toList()
  }
  private fun parseRoot(r:JsonReader,out:MutableMap<String,Station>){
   r.beginObject();while(r.hasNext())when(r.nextName()){
@@ -104,10 +116,13 @@ object YandexRaspApi {
   };r.endObject()
  }
  private fun parseRegion(r:JsonReader,out:MutableMap<String,Station>){
+  var region="";val stations=LinkedHashMap<String,Station>()
   r.beginObject();while(r.hasNext())when(r.nextName()){
-   "settlements"->{r.beginArray();while(r.hasNext())parseSettlement(r,out);r.endArray()}
+   "title"->region=readString(r)
+   "settlements"->{r.beginArray();while(r.hasNext())parseSettlement(r,stations);r.endArray()}
    else->r.skipValue()
   };r.endObject()
+  stations.forEach{(code,station)->out[code]=station.copy(region=region)}
  }
  private fun parseSettlement(r:JsonReader,out:MutableMap<String,Station>){
   var settlement="";val stationList=mutableListOf<Station>()
@@ -129,8 +144,8 @@ object YandexRaspApi {
    };r.endObject()}
    else->r.skipValue()
   };r.endObject()
-  // The documented transport_type for commuter rail is "suburban".
-  return if(code.startsWith("s") && title.isNotBlank() && (transport.equals("suburban",true)||transport.contains("электрич",true)))Station(code,title) else null
+  // A station's primary transport may be train even when suburban services stop there.
+  return if(code.startsWith("s") && title.isNotBlank() && RailInputRules.isRailTransport(transport))Station(code,title) else null
  }
  private fun readString(r:JsonReader):String=when(r.peek()){
   android.util.JsonToken.STRING->r.nextString()

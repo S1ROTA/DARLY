@@ -1,6 +1,7 @@
 name: Build and Release DARLY
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main]
     tags: ['v*']
@@ -48,3 +49,11 @@ jobs:
           body_path: RELEASE_NOTES.md
           prerelease: true
           files: app/build/outputs/apk/debug/app-debug.apk
+      - name: Build isolated device QA package
+        if: github.event_name == 'pull_request'
+        run: gradle --no-daemon :app:assembleQa
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: DARLY-qa-apk
+          path: app/build/outputs/apk/qa/app-qa.apk

@@ -31,14 +31,14 @@ class MainActivity:Activity(){
  private var railNextOffset=0
  private var railIntervalCount=0
  private var railError:String?=null
- private var railCatalogError:String?=null
+ private val railCatalogError:String? get()=RailCatalogLoader.state.error
  private var railLoading=false
- private var railCatalogLoading=false
- private var railCatalogAttempted=false
+ private val railCatalogLoading:Boolean get()=RailCatalogLoader.state.loading
  private var railPickerQuery=""
  private var railHasSearched=false
  private var railChoosingOrigin=true
  private var railSearchEpoch=0
+ private var railCatalogProgress:TextView?=null
  private var selectedSound=""
  private var clockView:TextView?=null
  private var showing=false
@@ -82,13 +82,18 @@ class MainActivity:Activity(){
  }}
  private val refresh=Runnable{when(screen){"home"->home();"timers"->timersPage()}}
  private val changes=object:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){
+    if(intent.action==RailCatalogLoader.ACTION_CHANGED){
+   if(railCatalogLoading){railCatalogProgress?.text="Загружено: ${RailCatalogLoader.state.bytes/1024/1024} МБ данных…";return}
+   when(screen){"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery);"settings"->settings()}
+   return
+  }
   if(RingService.active(this@MainActivity)){openCurrentScreen();return}
   if(screen=="home"||screen=="timers"){handler.removeCallbacks(refresh);handler.postDelayed(refresh,100)}
  }}
  private var registered=false
  /** On Android 13+ app-only events must be registered as non-exported. */
  private fun registerChangesReceiver(){
-  val filter=IntentFilter(AlarmStore.ACTION_CHANGED)
+  val filter=IntentFilter(AlarmStore.ACTION_CHANGED).apply{addAction(RailCatalogLoader.ACTION_CHANGED)}
   if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.TIRAMISU){
    registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED)
   }else{
@@ -107,19 +112,47 @@ class MainActivity:Activity(){
  private fun fadeDefault()=prefs().getInt("default_fade",30)
  private fun vibrateDefault()=prefs().getBoolean("default_vibrate",true)
  override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
+  val railPrefs=getSharedPreferences("rail_schedules",MODE_PRIVATE)
+  fun restored(which:String):YandexRaspApi.Station?=railPrefs.getString("selected_$which",null)?.let{raw->runCatching{
+   val j=org.json.JSONObject(raw)
+   YandexRaspApi.Station(j.getString("code"),j.getString("title"),j.optString("settlement"),j.optString("region"))
+  }.getOrNull()}
+  railFrom=restored("from");railTo=restored("to")
+  railDate=savedInstanceState?.getString("rail_date")?:java.time.LocalDate.now().toString()
+  railPickerQuery=savedInstanceState?.getString("rail_query").orEmpty()
+  railChoosingOrigin=savedInstanceState?.getBoolean("rail_origin",true)?:true
   if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),3)
   NextAlarmNotifier.sync(this)
-  if(intent.getStringExtra("open_tools")=="timers")timersPage() else openCurrentScreen()
+  if(RingService.active(this))openCurrentScreen()
+  else if(intent.getStringExtra("open_tools")=="timers")timersPage()
+  else when(savedInstanceState?.getString("screen")){
+   "rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery)
+   "settings"->settings();"presets"->presets();"timers"->timersPage();"stopwatch"->stopwatchPage()
+   else->home()
+  }
+ }
+ override fun onSaveInstanceState(outState:Bundle){
+  outState.putString("screen",screen);outState.putString("rail_date",railDate)
+  outState.putString("rail_query",railPickerQuery);outState.putBoolean("rail_origin",railChoosingOrigin)
+  super.onSaveInstanceState(outState)
+ }
+ private fun saveRailSelection(){
+  val edit=getSharedPreferences("rail_schedules",MODE_PRIVATE).edit()
+  fun store(which:String,s:YandexRaspApi.Station?){
+   if(s==null)edit.remove("selected_$which")
+   else edit.putString("selected_$which",org.json.JSONObject().put("code",s.code).put("title",s.title).put("settlement",s.settlement).put("region",s.region).toString())
+  }
+  store("from",railFrom);store("to",railTo);edit.apply()
  }
  override fun onResume(){super.onResume();showing=true
   if(!registered)registerChangesReceiver()
   handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
   val allowed=Build.VERSION.SDK_INT<31 || getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
-  if(allowed && lastPermission==false)AlarmStore.reschedule(this)
+  if(allowed && lastPermission!=true){AlarmStore.reschedule(this);TimerStore.restore(this)}
   lastPermission=allowed
   if(RingService.active(this))openCurrentScreen()else when(screen){
-   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage();"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin);"rail_key"->railKeyPage()
+   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage();"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery);"rail_key"->railKeyPage()
   }
   NextAlarmNotifier.sync(this)
  }
@@ -127,6 +160,7 @@ class MainActivity:Activity(){
   if(registered){unregisterReceiver(changes);registered=false}
   super.onPause()
  }
+ override fun onDestroy(){++railSearchEpoch;handler.removeCallbacksAndMessages(null);super.onDestroy()}
  private fun openCurrentScreen(){if(RingService.active(this)){startActivity(Intent(this,RingActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP));return};home()}
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data)
   if(requestCode==28&&resultCode==RESULT_OK)data?.data?.let{uri->
@@ -507,9 +541,9 @@ class MainActivity:Activity(){
   body.addView(Ui.outlineButton(this,if(keyReady)"Изменить или удалить API-ключ" else "Добавить API-ключ") {railKeyPage()});addGap(16)
   if(keyReady){
    val localCount=RailStationCache.all(this).size
-   body.addView(small(if(localCount>0)"Индекс станций электричек: $localCount" else "Индекс станций создаётся при открытии раздела электричек"));addGap(9)
+   body.addView(small(if(localCount>0)"Индекс железнодорожных станций: $localCount" else "Индекс станций создаётся при открытии раздела электричек"));addGap(9)
    val updateCatalog=Ui.outlineButton(this,if(railCatalogLoading)"Обновление каталога…" else "Обновить каталог станций"){
-    railCatalogAttempted=false;railCatalogError=null;railDownloadStations()
+    railDownloadStations()
    }
    updateCatalog.isEnabled=!railCatalogLoading
    body.addView(updateCatalog);addGap(15)
@@ -570,13 +604,14 @@ class MainActivity:Activity(){
  }
  private fun railSaveInitialKey(value:String){
   val cleaned=value.trim()
-  if(cleaned.isBlank()){Toast.makeText(this,"Вставь API-ключ Яндекса",Toast.LENGTH_SHORT).show();return}
+  RailInputRules.apiKeyError(cleaned)?.let{Toast.makeText(this,it,Toast.LENGTH_LONG).show();return}
   getSharedPreferences("rail_schedules",MODE_PRIVATE).edit().putString("api_key",cleaned).apply()
-  railCatalogAttempted=false;railCatalogError=null;railResetResults();railPage()
+  railResetResults();railPage()
  }
  private fun railPage(){
   setupScreen("rail","Электрички",if(railKey().isBlank())"Подключение к Яндекс Расписаниям" else "Расписание пригородных поездов")
-  if(railKey().isBlank()){
+  if(RailInputRules.apiKeyError(railKey())!=null){
+   if(railKey().isNotBlank()){body.addView(small("Сохранённый ключ имеет неверный формат. Вставь только значение API-ключа."));addGap(12)}
    // Nothing else from the timetable is accessible until a key is entered.
    val card=Ui.card(this)
    card.addView(Ui.text(this,"API-ключ",17f,Ui.WHITE,true));card.addView(Ui.space(this,10))
@@ -589,12 +624,12 @@ class MainActivity:Activity(){
   }
   // Official API does not have name autocomplete: prepare a compact local index
   // automatically once, streaming the full upstream data without keeping JSON in RAM.
-  if(RailStationCache.needsRefresh(this) && !railCatalogLoading && !railCatalogAttempted){railDownloadStations()}
+  RailCatalogLoader.ensure(applicationContext,railKey())
   section("Маршрут")
   val route=Ui.row(this)
   route.addView(railStationField("ОТКУДА",railFrom){railStationPicker(true)},LinearLayout.LayoutParams(0,-2,1f))
   route.addView(railMini("⇄"){
-   val old=railFrom;railFrom=railTo;railTo=old;railResetResults();railPage()
+   val old=railFrom;railFrom=railTo;railTo=old;saveRailSelection();railResetResults();railPage()
   },LinearLayout.LayoutParams(Ui.dp(this,42),Ui.dp(this,48)).apply{
    marginStart=Ui.dp(this@MainActivity,6);marginEnd=Ui.dp(this@MainActivity,6)
   })
@@ -627,17 +662,17 @@ class MainActivity:Activity(){
   if(count>0 && railCatalogError!=null){
    body.addView(small("Используется сохранённый каталог: обновление не удалось."));addGap(6)
    body.addView(railMini("Повторить обновление"){
-    railCatalogAttempted=false;railCatalogError=null;railDownloadStations()
+    railDownloadStations()
    });addGap(10)
   }
   if(count==0){
    val notice=Ui.card(this)
    notice.addView(Ui.text(this,if(railCatalogLoading)"Подготавливаем поиск станций…" else "Каталог станций ещё не готов",15f,Ui.WHITE,true))
    notice.addView(Ui.space(this,6))
-   notice.addView(small(if(railCatalogLoading)"Первая загрузка — примерно 40 МБ. Затем названия станций ищутся офлайн." else railCatalogError?:"Каталог загрузится автоматически при наличии интернета."))
+   railCatalogProgress=small(if(railCatalogLoading)"Загружено: ${RailCatalogLoader.state.bytes/1024/1024} МБ данных. Названия станций будут доступны офлайн." else railCatalogError?:"Каталог загрузится автоматически при наличии интернета.");notice.addView(railCatalogProgress)
    if(railCatalogLoading){notice.addView(Ui.space(this,10));notice.addView(ProgressBar(this).apply{isIndeterminate=true},LinearLayout.LayoutParams(Ui.dp(this,30),Ui.dp(this,30)))}
    if(railCatalogError!=null){notice.addView(Ui.space(this,9));notice.addView(railMini("Повторить загрузку"){
-    railCatalogAttempted=false;railCatalogError=null;railDownloadStations()
+    railDownloadStations()
    })}
    body.addView(notice);addGap(13)
   }
@@ -647,7 +682,7 @@ class MainActivity:Activity(){
    val line=Ui.row(this)
    favorites.forEachIndexed{index,fav->
     val view=railMini("${fav.from.title} → ${fav.to.title}"){
-     railFrom=fav.from;railTo=fav.to;railResetResults();railPage()
+     railFrom=fav.from;railTo=fav.to;saveRailSelection();railResetResults();railPage()
     }
     line.addView(view)
     if(index<favorites.lastIndex)line.addView(Ui.hspace(this,7))
@@ -698,28 +733,28 @@ class MainActivity:Activity(){
   option("ИЗМЕНИТЬ КЛЮЧ",key)
   body.addView(Ui.button(this,"Сохранить ключ"){
    val value=key.text.toString().trim()
-   if(value.isBlank()){Toast.makeText(this,"Введи ключ",Toast.LENGTH_SHORT).show();return@button}
+   RailInputRules.apiKeyError(value)?.let{Toast.makeText(this,it,Toast.LENGTH_LONG).show();return@button}
    getSharedPreferences("rail_schedules",MODE_PRIVATE).edit().putString("api_key",value).apply()
-   railCatalogAttempted=false;railCatalogError=null;railResetResults();settings()
+   RailCatalogLoader.invalidate(this);railResetResults();settings()
   });addGap(11)
   if(railKey().isNotBlank()){
    body.addView(Ui.outlineButton(this,"Удалить API-ключ"){
     getSharedPreferences("rail_schedules",MODE_PRIVATE).edit().remove("api_key").apply()
-    railCatalogAttempted=false;railCatalogError=null;railResetResults();settings()
+    RailCatalogLoader.invalidate(this);railResetResults();settings()
    });addGap(12)
   }
  }
  private fun railStationPicker(isOrigin:Boolean,initialQuery:String=""){
-  if(railKey().isBlank()){railPage();return}
+  if(RailInputRules.apiKeyError(railKey())!=null){railPage();return}
   railChoosingOrigin=isOrigin
   railPickerQuery=initialQuery
   setupScreen("rail_stations","Выбери станцию",if(isOrigin)"Отправление" else "Прибытие",true)
   val stations=RailStationCache.all(this)
   if(stations.isEmpty()){
-   body.addView(small(if(railCatalogLoading)"Загружаем станции электричек…" else railCatalogError?:"Подготавливаем каталог…"));addGap(9)
+   railCatalogProgress=small(if(railCatalogLoading)"Загружаем железнодорожные станции…" else railCatalogError?:"Подготавливаем каталог…");body.addView(railCatalogProgress);addGap(9)
    if(railCatalogLoading){body.addView(ProgressBar(this).apply{isIndeterminate=true},LinearLayout.LayoutParams(Ui.dp(this,29),Ui.dp(this,29)));addGap(12)}
    if(railCatalogError!=null){body.addView(railMini("Повторить загрузку"){
-    railCatalogAttempted=false;railCatalogError=null;railDownloadStations()
+    railDownloadStations()
    });addGap(12)}
   }
   val query=textInput(initialQuery,"Поиск станции или платформы")
@@ -758,32 +793,11 @@ class MainActivity:Activity(){
  }
  private fun railStationSelected(station:YandexRaspApi.Station){
   if(railChoosingOrigin)railFrom=station else railTo=station
+  saveRailSelection()
   railPickerQuery="";railResetResults();railPage()
  }
  private fun railDownloadStations(){
-  if(railKey().isBlank()||railCatalogLoading)return
-  railCatalogAttempted=true;railCatalogLoading=true;railCatalogError=null
-  val key=railKey()
-  Thread({
-   val result=runCatching{
-    val stations=YandexRaspApi.loadStations(key)
-    require(stations.isNotEmpty()){"Яндекс вернул пустой список пригородных станций"}
-    RailStationCache.replace(applicationContext,stations)
-    stations.size
-   }
-   runOnUiThread{
-    // A changed key invalidates the current response's status (catalog data
-    // itself is not keyed; an earlier successful download is still usable).
-    railCatalogLoading=false
-    if(railKey()!=key){railCatalogAttempted=false;railCatalogError=null}
-    else railCatalogError=result.exceptionOrNull()?.let{"Не удалось загрузить станции: ${it.localizedMessage?:"Ошибка сети"}"}
-    when(screen){
-     "rail"->railPage()
-     "rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery)
-     "settings"->settings()
-    }
-   }
-  },"DARLY-rail-catalog").start()
+  RailCatalogLoader.ensure(applicationContext,railKey(),force=true)
  }
  private fun railSearch(append:Boolean){
   val from=railFrom;val to=railTo;val key=railKey()
@@ -799,7 +813,7 @@ class MainActivity:Activity(){
   Thread({
    val outcome=runCatching{YandexRaspApi.search(key,from,to,date,offset)}
    runOnUiThread{
-    if(epoch!=railSearchEpoch)return@runOnUiThread
+    if(isDestroyed || isFinishing || epoch!=railSearchEpoch)return@runOnUiThread
     railLoading=false;railHasSearched=true
     outcome.onSuccess{response->
      railTrains=if(append)(railTrains+response.trains).distinctBy{it.number to it.departureAt} else response.trains

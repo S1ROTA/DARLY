@@ -7,6 +7,8 @@ class AlarmReceiver: BroadcastReceiver() {
   val id=intent.getIntExtra("id",-1)
   val a=AlarmStore.all(context).firstOrNull{it.id==id}?:return
   val snoozed=intent.getBooleanExtra("snoozed",false)
+  if(!snoozed && !a.enabled)return
+  if(snoozed && AlarmStore.snoozeUntil(context,id)==0L)return
   if(snoozed) AlarmStore.clearSnooze(context,id)
   if(!snoozed) {
    if(a.days==0) AlarmStore.save(context,AlarmStore.all(context).map{if(it.id==id)it.copy(enabled=false)else it})

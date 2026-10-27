@@ -20,11 +20,14 @@ object StopwatchStore {
   val stamp=p.getLong("started",0);val running=p.getBoolean("running",false)
   val now=SystemClock.elapsedRealtime()
   // Monotonic time resets after reboot; never display negative or runaway values.
-  val valid=stamp in 1..now
+  val boot=android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1)
+  val savedBoot=p.getInt("boot",-1)
+  val valid=stamp in 1..now && (savedBoot<0 || savedBoot==boot)
   return StopwatchState(p.getLong("accrued",0).coerceAtLeast(0),if(valid)stamp else 0L,running&&valid,marks)
  }
  private fun save(c:Context,s:StopwatchState){val marks=JSONArray();s.marks.forEach{marks.put(it)}
-  prefs(c).edit().putLong("accrued",s.accrued).putLong("started",s.startedAt).putBoolean("running",s.running).putString("marks",marks.toString()).apply()
+  val boot=android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1)
+  prefs(c).edit().putInt("boot",boot).putLong("accrued",s.accrued).putLong("started",s.startedAt).putBoolean("running",s.running).putString("marks",marks.toString()).apply()
  }
  fun start(c:Context){val s=get(c);if(!s.running)save(c,s.copy(running=true,startedAt=SystemClock.elapsedRealtime()))}
  fun pause(c:Context){val s=get(c);if(s.running)save(c,s.copy(accrued=s.elapsed(),startedAt=0,running=false))}

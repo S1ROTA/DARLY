@@ -38,7 +38,9 @@ object Ui {
  }
  private var customCached:Bitmap?=null
  private var customStamp:Long=Long.MIN_VALUE
- fun clearWallpaperCache(){wallpaperCache.evictAll();customCached=null;customStamp=Long.MIN_VALUE}
+ private var paletteStamp:Long=Long.MIN_VALUE
+ private var customPalette:IntArray?=null
+ fun clearWallpaperCache(){wallpaperCache.evictAll();customCached=null;customStamp=Long.MIN_VALUE;customPalette=null;paletteStamp=Long.MIN_VALUE}
  fun hasCustomWallpaper(c:Context)=c.getFileStreamPath("darly_custom_wallpaper.jpg").exists()
  /** The source is copied byte-for-byte; only its *display bitmap* is size-limited.
   * No fixed 2x downsampling: preserves sharp detail on high-resolution phones. */
@@ -91,6 +93,8 @@ object Ui {
    bg=0xff101724.toInt();card=0xe8172435.toInt();blue=0xff91bce8.toInt();gold=0xffe7c79e.toInt();muted=0xffbccbd7.toInt()
    try{
     val file=c.getFileStreamPath("darly_custom_wallpaper.jpg")
+    val stamp=file.lastModified() xor file.length()
+    customPalette?.takeIf{paletteStamp==stamp}?.let{blue=it[0];bg=it[1];card=it[2];return}
     val options=BitmapFactory.Options().apply{inSampleSize=16}
     val bmp=BitmapFactory.decodeFile(file.absolutePath,options)
     if(bmp!=null){
@@ -105,6 +109,7 @@ object Ui {
       hsv[2]=.16f;hsv[1]=.36f;bg=Color.HSVToColor(hsv);card=(0xe8 shl 24) or (bg and 0xffffff)
      }
      bmp.recycle()
+     paletteStamp=stamp;customPalette=intArrayOf(blue,bg,card)
     }
    }catch(_:Exception){}
   }

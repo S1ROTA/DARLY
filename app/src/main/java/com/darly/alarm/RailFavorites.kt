@@ -14,13 +14,13 @@ object RailFavorites {
    val r=array.optJSONObject(idx)?:return@mapNotNull null
    val f=r.optJSONObject("from")?:return@mapNotNull null
    val t=r.optJSONObject("to")?:return@mapNotNull null
-   val from=YandexRaspApi.Station(f.getString("code"),f.optString("title"),f.optString("settlement"))
-   val to=YandexRaspApi.Station(t.getString("code"),t.optString("title"),t.optString("settlement"))
+   val from=YandexRaspApi.Station(f.getString("code"),f.optString("title"),f.optString("settlement"),f.optString("region"))
+   val to=YandexRaspApi.Station(t.getString("code"),t.optString("title"),t.optString("settlement"),t.optString("region"))
    Route(from,to)
   }
  }.getOrDefault(emptyList())
  private fun write(c:Context,routes:List<Route>){
-  fun station(s:YandexRaspApi.Station)=JSONObject().put("code",s.code).put("title",s.title).put("settlement",s.settlement)
+  fun station(s:YandexRaspApi.Station)=JSONObject().put("code",s.code).put("title",s.title).put("settlement",s.settlement).put("region",s.region)
   val array=JSONArray()
   routes.forEach{array.put(JSONObject().put("from",station(it.from)).put("to",station(it.to)))}
   prefs(c).edit().putString("favorite_routes",array.toString()).apply()
