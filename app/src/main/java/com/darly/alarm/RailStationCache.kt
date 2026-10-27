@@ -11,6 +11,8 @@ object RailStationCache {
  private const val FILE="suburban_stations_v1.bin"
  private const val MAX_STATIONS=120000
  private var cached:List<YandexRaspApi.Station>?=null
+ private var indexed:List<Triple<YandexRaspApi.Station,String,String>>?=null
+ fun needsRefresh(context:Context):Boolean = RailCachePolicy.shouldRefresh(File(context.filesDir,FILE).lastModified(),System.currentTimeMillis())
  @Synchronized fun all(context:Context):List<YandexRaspApi.Station>{
   cached?.let{return it}
   val file=File(context.filesDir,FILE)
@@ -20,7 +22,7 @@ object RailStationCache {
     val count=input.readInt()
     if(count !in 0..MAX_STATIONS)throw IllegalStateException("Wrong station catalog size")
     (0 until count).map{YandexRaspApi.Station(input.readUTF(),input.readUTF(),input.readUTF())}
-   }.also{cached=it}
+   }.also{cached=it;indexed=null}
   }catch(_:Exception){emptyList()}
  }
  @Synchronized fun replace(context:Context,stations:List<YandexRaspApi.Station>){
@@ -36,14 +38,30 @@ object RailStationCache {
     temp.copyTo(dest,overwrite=true)
     temp.delete()
    }
-   cached=stations
+   cached=stations;indexed=null
   }catch(e:Exception){temp.delete();throw e}
  }
- fun find(stations:List<YandexRaspApi.Station>,query:String,limit:Int=35):List<YandexRaspApi.Station>{
-  val s=query.trim().lowercase(Locale.ROOT)
-  if(s.length<2)return emptyList()
-  return stations.asSequence().filter{
-   it.title.lowercase(Locale.ROOT).contains(s)||it.settlement.lowercase(Locale.ROOT).contains(s)||it.code.lowercase(Locale.ROOT)==s
-  }.take(limit).toList()
+ fun find(stations:List<YandexRaspApi.Station>,query:String,limit:Int=16):List<YandexRaspApi.Station>{
+  val q=query.trim().lowercase(Locale.ROOT)
+  if(q.length<2||limit<=0)return emptyList()
+  // Cache searchable lowercase labels; avoid lowercasing tens of thousands of
+  // entries on every keystroke. Prefer names beginning with the query.
+  val index=synchronized(this){
+   indexed?.takeIf{it.size==stations.size}?:stations.map{
+    Triple(it,it.title.lowercase(Locale.ROOT),(it.title+" · "+it.settlement).lowercase(Locale.ROOT))
+   }.also{indexed=it}
+  }
+  val result=ArrayList<YandexRaspApi.Station>(limit)
+  for((station,title,_) in index){
+   if(title.startsWith(q)||station.code.equals(q,true)){
+    result.add(station);if(result.size==limit)return result
+   }
+  }
+  for((station,_,label) in index){
+   if(label.contains(q)&&result.none{it.code==station.code}){
+    result.add(station);if(result.size==limit)break
+   }
+  }
+  return result
  }
 }
