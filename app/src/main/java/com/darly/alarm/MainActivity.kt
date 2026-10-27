@@ -23,6 +23,20 @@ import java.util.*
 class MainActivity:Activity(){
  private lateinit var body:LinearLayout
  private var screen="home"
+ private var railFrom:YandexRaspApi.Station?=null
+ private var railTo:YandexRaspApi.Station?=null
+ private var railDate=java.time.LocalDate.now().toString()
+ private var railTrains:List<YandexRaspApi.Train> = emptyList()
+ private var railSearchTotal=0
+ private var railNextOffset=0
+ private var railIntervalCount=0
+ private var railError:String?=null
+ private var railCatalogError:String?=null
+ private var railLoading=false
+ private var railCatalogLoading=false
+ private var railHasSearched=false
+ private var railChoosingOrigin=true
+ private var railSearchEpoch=0
  private var selectedSound=""
  private var clockView:TextView?=null
  private var showing=false
@@ -103,7 +117,7 @@ class MainActivity:Activity(){
   if(allowed && lastPermission==false)AlarmStore.reschedule(this)
   lastPermission=allowed
   if(RingService.active(this))openCurrentScreen()else when(screen){
-   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage()
+   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage();"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin);"rail_key"->railKeyPage()
   }
   NextAlarmNotifier.sync(this)
  }
@@ -207,7 +221,7 @@ class MainActivity:Activity(){
   scroll.addView(body);frame.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val bar=Ui.row(this)
   if(back){val prev=Ui.text(this,"‹",35f,Ui.WHITE,true)
-   prev.setPadding(0,0,Ui.dp(this,18),0);Ui.interactive(this,prev){when(which){"stopwatch","timer_editor"->timersPage();"themes"->settings();else->home()}};bar.addView(prev)}
+   prev.setPadding(0,0,Ui.dp(this,18),0);Ui.interactive(this,prev){when(which){"stopwatch","timer_editor"->timersPage();"themes"->settings();"rail_stations","rail_key"->railPage();else->home()}};bar.addView(prev)}
   val heading=Ui.column(this);heading.addView(Ui.text(this,title,if(back)23f else 25f,Ui.WHITE,true))
   if(subtitle.isNotBlank()){heading.addView(Ui.space(this,4));heading.addView(Ui.text(this,subtitle,12f,Ui.muted))}
   bar.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
@@ -224,11 +238,11 @@ class MainActivity:Activity(){
 
   }
   body.addView(bar);body.addView(Ui.space(this,23))
-  if(which=="home"||which=="presets"||which=="settings")frame.addView(bottomNavigation(which))
+  if(which=="home"||which=="presets"||which=="rail"||which=="settings")frame.addView(bottomNavigation(which))
   // No overlapping full-screen roots: they caused moving nav bars and jumpy status insets.
   // Animate only opacity of the incoming content; the wallpaper never translates.
   setContentView(root)
-  val tabs=listOf("home","presets","settings")
+  val tabs=listOf("home","presets","rail","settings")
   if(from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)){
    scroll.alpha=0f
    scroll.animate().alpha(1f).setDuration(260L)
@@ -238,14 +252,14 @@ class MainActivity:Activity(){
  // Horizontal swipes switch between primary sections, without disrupting vertical scrolls.
  override fun dispatchTouchEvent(ev:MotionEvent):Boolean{
   if(ev.actionMasked==MotionEvent.ACTION_DOWN){tabSwipeX=ev.x;tabSwipeY=ev.y}
-  if(ev.actionMasked==MotionEvent.ACTION_UP&&screen in listOf("home","presets","settings")){
+  if(ev.actionMasked==MotionEvent.ACTION_UP&&screen in listOf("home","presets","rail","settings")){
    val dx=ev.x-tabSwipeX;val dy=ev.y-tabSwipeY
    if(kotlin.math.abs(dx)>Ui.dp(this,115)&&kotlin.math.abs(dy)<Ui.dp(this,85)){
     val cancel=MotionEvent.obtain(ev);cancel.action=MotionEvent.ACTION_CANCEL
     super.dispatchTouchEvent(cancel);cancel.recycle()
-    val list=listOf("home","presets","settings");val index=list.indexOf(screen)
-    val target=(index+if(dx<0)1 else -1).coerceIn(0,2)
-    if(target!=index)when(target){0->home();1->presets();2->settings()}
+    val list=listOf("home","presets","rail","settings");val index=list.indexOf(screen)
+    val target=(index+if(dx<0)1 else -1).coerceIn(0,list.lastIndex)
+    if(target!=index)when(target){0->home();1->presets();2->railPage();3->settings()}
     return true
    }
   }
@@ -253,7 +267,7 @@ class MainActivity:Activity(){
  }
  private fun bottomNavigation(active:String):LinearLayout{
   val nav=Ui.row(this).apply{setBackgroundColor(0xf209111e.toInt());setPadding(Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8),Ui.dp(this@MainActivity,10),Ui.dp(this@MainActivity,8))}
-  listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
+  listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("rail",R.drawable.ic_rail_nav,"Электрички"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
    val item=Ui.column(this).apply{gravity=Gravity.CENTER;contentDescription=label}
    val icon=ImageView(this).apply{
     setImageResource(iconId)
@@ -263,7 +277,7 @@ class MainActivity:Activity(){
    }
    item.addView(icon,LinearLayout.LayoutParams(Ui.dp(this,28),Ui.dp(this,28)))
    item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,12f,if(key==active)Ui.blue else Ui.muted).apply{gravity=Gravity.CENTER})
-   Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();else->settings()}}
+   Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();"rail"->railPage();else->settings()}}
    nav.addView(item,LinearLayout.LayoutParams(0,Ui.dp(this,64),1f))
   }
   return nav
@@ -495,7 +509,7 @@ class MainActivity:Activity(){
     try{startActivity(Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",android.net.Uri.parse("package:$packageName")))}catch(_:Exception){Toast.makeText(this,"Открой разрешения DARLY в настройках системы",Toast.LENGTH_LONG).show()}
    });addGap(10)
   }
-  body.addView(small("DARLY 2.9.0"))
+  body.addView(small("DARLY 3.0.0"))
  }
  private fun themes(){setupScreen("themes","Оформление","Сезоны и собственные фотографии",true)
   body.addView(Ui.button(this,"＋  Выбрать фотографию из галереи"){chooseWallpaper()});addGap(13)
@@ -515,6 +529,207 @@ class MainActivity:Activity(){
    body.addView(c);addGap()
   }
  }
+ /** Separate commuter timetable. It intentionally does not read or write DARLY alarms. */
+ private fun railResetResults(){
+  ++railSearchEpoch;railLoading=false;railTrains=emptyList();railSearchTotal=0;railNextOffset=0;railIntervalCount=0;railHasSearched=false;railError=null
+ }
+ private fun railPage(){
+  setupScreen("rail","Электрички","Пригородное расписание · Яндекс Расписания")
+  section("Маршрут")
+  body.addView(Ui.outlineButton(this,"Откуда: ${railFrom?.label ?: "Выбрать станцию"}"){railStationPicker(true)});addGap(11)
+  body.addView(Ui.outlineButton(this,"Куда: ${railTo?.label ?: "Выбрать станцию"}"){railStationPicker(false)});addGap(13)
+  val actions=Ui.row(this)
+  actions.addView(Ui.outlineButton(this,"⇄  Поменять местами"){
+   val s=railFrom;railFrom=railTo;railTo=s;railResetResults();railPage()
+  },LinearLayout.LayoutParams(0,-2,1f));actions.addView(Ui.hspace(this,12))
+  actions.addView(Ui.outlineButton(this,"${if(railFrom!=null&&railTo!=null&&RailFavorites.contains(this,railFrom!!,railTo!!))"★" else "☆"}  Избранное"){
+   val f=railFrom;val t=railTo
+   if(f==null||t==null){Toast.makeText(this,"Выбери обе станции",Toast.LENGTH_SHORT).show()}
+   else {RailFavorites.toggle(this,f,t);railPage()}
+  },LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(actions);addGap(16)
+  val dateRow=Ui.row(this)
+  dateRow.addView(Ui.outlineButton(this,"Дата: $railDate  ▾"){
+   val date=java.time.LocalDate.parse(railDate)
+   android.app.DatePickerDialog(this,{_,year,month,day->
+    railDate=java.time.LocalDate.of(year,month+1,day).toString()
+    railResetResults();railPage()
+   },date.year,date.monthValue-1,date.dayOfMonth).show()
+  },LinearLayout.LayoutParams(0,-2,1f))
+  dateRow.addView(Ui.hspace(this,12))
+  dateRow.addView(Ui.outlineButton(this,"Сегодня"){
+   railDate=java.time.LocalDate.now().toString();railResetResults();railPage()
+  },LinearLayout.LayoutParams(0,-2,1f))
+  body.addView(dateRow);addGap(15)
+  val configured=railKey().isNotBlank()
+  if(!configured){
+   val info=Ui.card(this)
+   info.addView(Ui.text(this,"Нужен API-ключ Яндекс Расписаний",16f,Ui.WHITE,true))
+   info.addView(Ui.space(this,9));info.addView(small("Полученный в кабинете разработчика ключ хранится только на этом устройстве."))
+   info.addView(Ui.space(this,11));info.addView(Ui.button(this,"Настроить ключ"){railKeyPage()})
+   body.addView(info);addGap(15)
+  }
+  val search=Ui.button(this,if(railLoading)"Загрузка расписания…" else "Найти электрички"){
+   if(!railLoading)railSearch(false)
+  }
+  search.isEnabled=!railLoading
+  body.addView(search);addGap(23)
+  val favorites=RailFavorites.all(this)
+  if(favorites.isNotEmpty()){
+   section("Избранные маршруты","${favorites.size}")
+   favorites.forEach{favorite->
+    body.addView(Ui.outlineButton(this,"${favorite.from.title}  →  ${favorite.to.title}"){
+     railFrom=favorite.from;railTo=favorite.to;railResetResults();railPage()
+    });addGap(9)
+   }
+   addGap(12)
+  }
+  if(railError!=null){val error=Ui.card(this)
+   error.addView(Ui.text(this,"Не удалось загрузить",15f,Ui.gold,true));error.addView(Ui.space(this,8));error.addView(small(railError!!))
+   body.addView(error);addGap(17)
+  }
+  if(railLoading){body.addView(small("Запрашиваем расписание электричек…"));addGap(18)}
+  if(railTrains.isNotEmpty()){
+   section("Расписание","${railTrains.size} из $railSearchTotal")
+   railTrains.forEach{train->
+    val card=Ui.card(this)
+    val time=Ui.row(this)
+    time.addView(Ui.text(this,train.labelTime,26f,Ui.WHITE,true))
+    time.addView(Ui.text(this,"    →    ",18f,Ui.muted))
+    time.addView(Ui.text(this,train.arrivalTime,24f,Ui.WHITE,true))
+    card.addView(time);card.addView(Ui.space(this,7))
+    val description=listOf(train.number.takeIf{it.isNotBlank()}?.let{"№ $it"},train.title.takeIf{it.isNotBlank()}).filterNotNull().joinToString(" · ")
+    card.addView(small(description.ifBlank{"Электричка"}))
+    if(train.durationSeconds>0){card.addView(Ui.space(this,7));card.addView(small("В пути: ${train.durationSeconds/3600} ч ${(train.durationSeconds%3600)/60} мин"))}
+    body.addView(card);addGap(11)
+   }
+   if(railNextOffset<railSearchTotal){body.addView(Ui.outlineButton(this,"Показать следующие"){
+    if(!railLoading)railSearch(true)
+   });addGap(18)}
+  }else if(!railLoading&&railError==null&&railHasSearched){
+   body.addView(small("На выбранную дату электрички не найдены. Проверь станции и дату."));addGap(12)
+  }
+  if(railIntervalCount>0){body.addView(small("Также найдено интервальных рейсов: $railIntervalCount. Их время отправления может задаваться диапазоном, а не отдельным временем."));addGap(12)}
+  body.addView(Ui.outlineButton(this,"Управление ключом API"){railKeyPage()});addGap(17)
+  val attribution=Ui.text(this,YandexRaspApi.ATTRIBUTION,13f,Ui.muted,true)
+  Ui.interactive(this,attribution){startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(YandexRaspApi.ATTRIBUTION_URL)))}
+  body.addView(attribution);addGap(5)
+  body.addView(small("Расписание справочное и может изменяться. Данные не влияют на будильники DARLY."))
+ }
+ private fun railKey()=getSharedPreferences("rail_schedules",MODE_PRIVATE).getString("api_key","").orEmpty()
+ private fun railKeyPage(){
+  setupScreen("rail_key","Доступ к расписанию","Ключ API Яндекс Расписаний",true)
+  body.addView(small("Ключ не встраивается в APK и не отправляется на GitHub. Он хранится в приватных настройках DARLY на этом телефоне."));addGap(14)
+  val key=textInput(railKey(),"Вставить API-ключ")
+  key.inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+  option("API-КЛЮЧ",key)
+  body.addView(Ui.button(this,"Сохранить ключ"){
+   val value=key.text.toString().trim()
+   if(value.isBlank()){Toast.makeText(this,"Введите ключ",Toast.LENGTH_SHORT).show();return@button}
+   getSharedPreferences("rail_schedules",MODE_PRIVATE).edit().putString("api_key",value).apply()
+   railError=null;railPage()
+  });addGap(12)
+  if(railKey().isNotBlank()){body.addView(Ui.outlineButton(this,"Удалить сохранённый ключ"){
+   getSharedPreferences("rail_schedules",MODE_PRIVATE).edit().remove("api_key").apply();railPage()
+  });addGap(13)}
+  body.addView(small("Работа API зависит от условий Яндекса и доступности сети. Для использования нужен выданный Яндексом ключ."))
+ }
+ private fun railStationPicker(isOrigin:Boolean){
+  railChoosingOrigin=isOrigin
+  setupScreen("rail_stations","Выбор станции",if(isOrigin)"Станция отправления" else "Станция прибытия",true)
+  val stations=RailStationCache.all(this)
+  val info=Ui.text(this,if(stations.isEmpty())"Список станций пока не загружен" else "Станций электричек в каталоге: ${stations.size}",13f,Ui.muted)
+  body.addView(info);addGap(12)
+  val query=textInput("","Название станции или населённого пункта")
+  option("ПОИСК ПО КАТАЛОГУ",query)
+  val results=Ui.column(this)
+  body.addView(results);addGap(12)
+  fun fill(text:String){
+   results.removeAllViews()
+   if(stations.isEmpty()){results.addView(small("Для поиска по названию скачай справочник станций ниже."));return}
+   val matches=RailStationCache.find(stations,text)
+   if(text.trim().length<2){results.addView(small("Введи минимум две буквы."));return}
+   if(matches.isEmpty()){results.addView(small("Станции не найдены."));return}
+   matches.forEach{station->
+    results.addView(Ui.outlineButton(this,station.label){railStationSelected(station)})
+    results.addView(Ui.space(this,7))
+   }
+  }
+  query.addTextChangedListener(object:android.text.TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){fill(s?.toString().orEmpty())}
+   override fun afterTextChanged(s:android.text.Editable?){}
+  })
+  fill("")
+  if(stations.isEmpty()){
+   addGap(12)
+   val download=Ui.button(this,if(railCatalogLoading)"Загрузка…" else "Скачать справочник станций (~40 МБ)"){
+    if(!railCatalogLoading)railDownloadStations()
+   };download.isEnabled=!railCatalogLoading;body.addView(download);addGap(10)
+   if(railCatalogLoading){body.addView(small("Скачиваем и обрабатываем станции. Это может занять некоторое время."));addGap(12)}
+   if(railCatalogError!=null){body.addView(small(railCatalogError!!));addGap(12)}
+  }
+  addGap(12)
+  body.addView(small("Либо введи код станции из адреса Яндекс Расписаний, например s9600213."));addGap(9)
+  val code=textInput("","Код вида s1234567")
+  option("КОД СТАНЦИИ",code)
+  body.addView(Ui.outlineButton(this,"Выбрать по коду"){
+   val normalized=code.text.toString().trim().lowercase(Locale.ROOT)
+   if(RailScheduleRules.stationCode(normalized)==null){
+    Toast.makeText(this,"Используй код станции вида s1234567",Toast.LENGTH_LONG).show()
+    return@outlineButton
+   }
+   railStationSelected(YandexRaspApi.Station(normalized,normalized))
+  })
+ }
+ private fun railStationSelected(station:YandexRaspApi.Station){
+  if(railChoosingOrigin)railFrom=station else railTo=station
+  railResetResults()
+  railPage()
+ }
+ private fun railDownloadStations(){
+  if(railKey().isBlank()){Toast.makeText(this,"Сначала укажи ключ API",Toast.LENGTH_LONG).show();railKeyPage();return}
+  railCatalogLoading=true;railCatalogError=null;railStationPicker(railChoosingOrigin)
+  val key=railKey()
+  Thread({
+   val result=runCatching{YandexRaspApi.loadStations(key)}
+   if(result.isSuccess&&result.getOrThrow().isEmpty()){
+    runOnUiThread{railCatalogError="Каталог не содержит пригородных станций";railCatalogLoading=false;if(screen=="rail_stations")railStationPicker(railChoosingOrigin)}
+    return@Thread
+   }
+   val outcome=result.mapCatching{RailStationCache.replace(applicationContext,it);it.size}
+   runOnUiThread{
+    railCatalogLoading=false
+    railCatalogError=outcome.exceptionOrNull()?.let{"Не удалось загрузить каталог: ${it.localizedMessage}"}
+    if(screen=="rail_stations")railStationPicker(railChoosingOrigin)
+   }
+  },"DARLY-rail-catalog").start()
+ }
+ private fun railSearch(append:Boolean){
+  val from=railFrom;val to=railTo;val key=railKey()
+  if(key.isBlank()){railKeyPage();return}
+  if(from==null||to==null){Toast.makeText(this,"Выбери станции отправления и прибытия",Toast.LENGTH_LONG).show();return}
+  if(from.code==to.code){Toast.makeText(this,"Выбери разные станции",Toast.LENGTH_SHORT).show();return}
+  railLoading=true;railError=null
+  val offset=if(append)railNextOffset else 0
+  if(!append){railTrains=emptyList();railSearchTotal=0;railNextOffset=0;railIntervalCount=0}
+  val epoch=++railSearchEpoch
+  val date=railDate
+  railPage()
+  Thread({
+   val outcome=runCatching{YandexRaspApi.search(key,from,to,date,offset)}
+   runOnUiThread{
+    if(epoch!=railSearchEpoch)return@runOnUiThread
+    railLoading=false;railHasSearched=true
+    outcome.onSuccess{response->
+     railTrains=if(append)(railTrains+response.trains).distinctBy{it.number to it.departureAt} else response.trains
+     railSearchTotal=response.total;railNextOffset=offset+50;railIntervalCount=response.intervalCount
+    }.onFailure{error->railError=error.localizedMessage?:"Ошибка сети"}
+    if(screen=="rail")railPage()
+   }
+  },"DARLY-rail-search").start()
+ }
+
  private fun toolsHeader(active:String){
   val row=Ui.row(this)
   val timers=if(active=="timers")Ui.button(this,"Таймеры"){if(active!="timers")timersPage()}
@@ -620,5 +835,5 @@ class MainActivity:Activity(){
   }
   if(showing&&s.running)handler.post(toolsTick)
  }
- override fun onBackPressed(){when{screen=="stopwatch"||screen=="timer_editor"->timersPage();screen=="themes"->settings();choosing->{resetSelection();home()};else->home()}}
+ override fun onBackPressed(){when{screen=="stopwatch"||screen=="timer_editor"->timersPage();screen=="themes"->settings();screen=="rail_stations"||screen=="rail_key"->railPage();choosing->{resetSelection();home()};else->home()}}
 }
