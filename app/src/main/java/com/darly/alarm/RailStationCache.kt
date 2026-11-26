@@ -10,10 +10,12 @@ import java.util.Locale
 object RailStationCache {
  private const val FILE="rail_stations_v2.bin"
  private const val MAX_STATIONS=120000
- private var cached:List<YandexRaspApi.Station>?=null
+ @Volatile private var cached:List<YandexRaspApi.Station>?=null
  private var indexed:List<Triple<YandexRaspApi.Station,String,String>>?=null
  private var indexedSource:List<YandexRaspApi.Station>?=null
- fun needsRefresh(context:Context):Boolean = all(context).isEmpty() || RailCachePolicy.shouldRefresh(File(context.filesDir,FILE).lastModified(),System.currentTimeMillis())
+ fun available(context:Context):Boolean = cached?.isNotEmpty() ?: (File(context.filesDir,FILE).length()>4)
+ fun countInMemory():Int?=cached?.size
+ fun needsRefresh(context:Context):Boolean = !available(context) || RailCachePolicy.shouldRefresh(File(context.filesDir,FILE).lastModified(),System.currentTimeMillis())
  @Synchronized fun all(context:Context):List<YandexRaspApi.Station>{
   cached?.let{return it}
   val file=File(context.filesDir,FILE)
@@ -24,7 +26,7 @@ object RailStationCache {
     if(count !in 0..MAX_STATIONS)throw IllegalStateException("Wrong station catalog size")
     (0 until count).map{YandexRaspApi.Station(input.readUTF(),input.readUTF(),input.readUTF(),input.readUTF())}
    }.also{cached=it;indexed=null}
-  }catch(_:Exception){emptyList()}
+  }catch(_:Exception){emptyList<YandexRaspApi.Station>().also{cached=it}}
  }
  @Synchronized fun replace(context:Context,stations:List<YandexRaspApi.Station>){
   require(stations.size<=MAX_STATIONS)

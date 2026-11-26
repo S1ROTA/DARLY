@@ -2,4 +2,8 @@
     <!-- Runs only inside the isolated, debuggable QA application. -->
     <instrumentation android:name="com.darly.alarm.RailSmokeInstrumentation"
         android:targetPackage="com.darly.alarm.qa" android:label="DARLY QA checks" />
+    <instrumentation android:name="com.darly.alarm.WakeChecksInstrumentation"
+        android:targetPackage="com.darly.alarm.qa" android:label="DARLY wake experience checks" />
+    <instrumentation android:name="com.darly.alarm.RailTrackingInstrumentation"
+        android:targetPackage="com.darly.alarm.qa" android:label="DARLY rail tracking checks" />
 </manifest>

@@ -5,7 +5,7 @@ import android.view.Gravity
 import android.widget.LinearLayout
 
 object RailTrainCard {
- fun create(c:Context,train:YandexRaspApi.Train,open:()->Unit):LinearLayout=Ui.card(c).apply{
+ fun create(c:Context,train:YandexRaspApi.Train,tracking:Boolean=false,track:(()->Unit)?=null,open:()->Unit):LinearLayout=Ui.card(c).apply{
   contentDescription="Рейс ${train.number}, ${train.labelTime} — ${train.arrivalTime}, ${train.fareLabel}. Остановки и цена"
   val times=Ui.row(c)
   times.addView(Ui.text(c,train.labelTime,26f,Ui.WHITE,true))
@@ -19,6 +19,8 @@ object RailTrainCard {
   val bottom=Ui.row(c)
   bottom.addView(Ui.text(c,train.fareLabel,15f,Ui.WHITE,true),LinearLayout.LayoutParams(0,-2,1f))
   bottom.addView(Ui.text(c,"Остановки и цена  ›",12f,Ui.blue,true))
-  addView(bottom);Ui.interactive(c,this,open)
+  addView(bottom)
+  if(track!=null){addView(Ui.space(c,12));addView(Ui.outlineButton(c,if(tracking)"✓ Отслеживается · отменить" else "Отслеживать",track))}
+  Ui.interactive(c,this,open)
  }
 }

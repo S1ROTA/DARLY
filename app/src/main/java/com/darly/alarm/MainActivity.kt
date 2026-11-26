@@ -36,8 +36,11 @@ class MainActivity:Activity(){
  private val railCatalogLoading:Boolean get()=RailCatalogLoader.state.loading
  private var railPickerQuery=""
  private var railHasSearched=false
+ private var railShowDeparted=false
  private var railChoosingOrigin=true
  private var railSearchEpoch=0
+ private var railPickerEpoch=0
+ private var railQueryTask:Runnable?=null
  private var railCatalogProgress:TextView?=null
  private var selectedSound=""
  private var clockView:TextView?=null
@@ -124,6 +127,7 @@ class MainActivity:Activity(){
   if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),3)
   NextAlarmNotifier.sync(this)
+  RailTracking.sync(this)
   if(RingService.active(this))openCurrentScreen()
   else if(intent.getStringExtra("open_tools")=="timers")timersPage()
   else when(savedInstanceState?.getString("screen")){
@@ -225,6 +229,7 @@ class MainActivity:Activity(){
  }
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
+  railPickerEpoch++;railQueryTask?.let{handler.removeCallbacks(it)};railQueryTask=null
   val from=screen
   if(from=="home" && which!="home")resetSelection()
   selectionButton=null
@@ -378,6 +383,12 @@ class MainActivity:Activity(){
   if(Build.VERSION.SDK_INT>=31&&!manager.canScheduleExactAlarms()){
    val hint=Ui.card(this);hint.addView(Ui.text(this,"Нужен доступ к точным будильникам",15f,Ui.WHITE,true));hint.addView(Ui.space(this,8));hint.addView(small("Без разрешения сигналы могут не сработать вовремя."));hint.addView(Ui.space(this,11));hint.addView(Ui.outlineButton(this,"Разрешить"){AlarmStore.exactPermission(this)});body.addView(hint);addGap()
   }
+  if(Build.VERSION.SDK_INT>=34&&!getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()){
+   val hint=Ui.card(this);hint.addView(Ui.text(this,"Разреши открывать экран звонка",15f,Ui.WHITE,true));hint.addView(Ui.space(this,8))
+   hint.addView(small("Чтобы будильник появился сразу поверх блокировки, нужен доступ к полноэкранным уведомлениям."));hint.addView(Ui.space(this,11))
+   hint.addView(Ui.outlineButton(this,"Настроить экран звонка"){startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,android.net.Uri.parse("package:$packageName")))})
+   body.addView(hint);addGap()
+  }
   val snoozed=AlarmStore.snoozed(this)
   if(snoozed.isNotEmpty()){section("Отложенные", "${snoozed.size}")
    snoozed.forEach{(a,until)->val c=Ui.card(this);c.addView(Ui.text(this,a.title,15f,Ui.WHITE,true));c.addView(Ui.space(this,7));c.addView(Ui.text(this,"Повтор в "+SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date(until)),15f,Ui.gold));c.addView(Ui.space(this,6));c.addView(countdown(until));c.addView(Ui.space(this,10));c.addView(Ui.outlineButton(this,"Отменить повтор"){AlarmStore.cancelSnooze(this,a.id);home()});body.addView(c);addGap()}
@@ -475,7 +486,9 @@ class MainActivity:Activity(){
   val p=CompactTimePicker(this).apply{hour=a?.hour?:7;minute=a?.minute?:0}
   body.addView(p);addGap(12)
   val title=textInput(a?.title?:"Будильник","Название");option("НАЗВАНИЕ",title)
-  body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);var days=a?.days?:0;body.addView(daySelector(days){days=it});addGap(19)
+  body.addView(Ui.text(this,"ДНИ НЕДЕЛИ · БЛИЖАЙШИЕ ДАТЫ",13f,Ui.muted));addGap(9);var days=a?.days?:0
+  val dayDates=AlarmDaySelector(this,days,{p.hour*60+p.minute}){days=it};body.addView(dayDates)
+  p.setOnTimeChangedListener{dayDates.refresh()};addGap(8);body.addView(small("Для каждого дня указана ближайшая дата сигнала. Повтор — каждую неделю."));addGap(19)
   soundControls();addGap(16)
   val vibrate=Ui.switch(this,a?.vibrate?:vibrateDefault());val vr=Ui.row(this);vr.addView(Ui.text(this,"Вибрация",15f),LinearLayout.LayoutParams(0,-2,1f));vr.addView(vibrate);body.addView(vr);addGap(18)
   val snoozes=listOf(1,5,10,15,20,30);val snooze=picker(snoozes,a?.snooze?:snoozeDefault()){ "$it мин" };option("ОТЛОЖИТЬ НА",snooze)
@@ -496,13 +509,15 @@ class MainActivity:Activity(){
   val t=CompactTimePicker(this).apply{hour=source.start/60;minute=source.start%60}
   body.addView(Ui.text(this,"ПЕРВЫЙ СИГНАЛ",13f,Ui.muted));addGap(10);body.addView(t);addGap(12)
   var days=source.days
-  body.addView(Ui.text(this,"ДНИ НЕДЕЛИ",13f,Ui.muted));addGap(9);body.addView(daySelector(days){days=it});addGap(20)
+  body.addView(Ui.text(this,"ДНИ НЕДЕЛИ · БЛИЖАЙШИЕ ДАТЫ",13f,Ui.muted));addGap(9)
+  val dayDates=AlarmDaySelector(this,days,{t.hour*60+t.minute}){days=it};body.addView(dayDates)
+  addGap(8);body.addView(small("Ближайшие даты первого сигнала. Повтор — каждую неделю."));addGap(20)
   val intervals=listOf(5,10,15,20,30,45,60);val interval=picker(intervals,source.step){"Каждые $it мин"};option("ИНТЕРВАЛ",interval)
   val counts=(2..24).toList();val count=picker(counts,source.count){"$it сигналов"};option("КОЛИЧЕСТВО",count)
   val preview=Ui.card(this);preview.addView(Ui.text(this,"ПРЕДПРОСМОТР",11f,Ui.gold,true));val content=Ui.text(this,"",15f,Ui.WHITE)
   preview.addView(Ui.space(this,8));preview.addView(content);body.addView(preview);addGap(17)
   fun updatePreview(){val step=intervals[interval.selectedItemPosition.coerceAtLeast(0)];val n=counts[count.selectedItemPosition.coerceAtLeast(0)];val start=t.hour*60+t.minute;val times=(0 until n).map{time((start+it*step)%1440)};content.text=times.chunked(4).joinToString("\n"){it.joinToString("     ")}}
-  t.setOnTimeChangedListener{updatePreview()}
+  t.setOnTimeChangedListener{dayDates.refresh();updatePreview()}
   val update=object:android.widget.AdapterView.OnItemSelectedListener{
    override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
    override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){updatePreview()}
@@ -533,7 +548,7 @@ class MainActivity:Activity(){
  }
  private fun settings(){setupScreen("settings","Настройки","Вид, звук и поведение приложения")
   section("Внешний вид");body.addView(Ui.button(this,"Выбрать тему оформления  ›"){themes()});addGap(12)
-  val animation=Ui.switch(this,prefs().getBoolean("animations",true));val a=Ui.row(this);a.addView(Ui.text(this,"Анимация кнопок",15f),LinearLayout.LayoutParams(0,-2,1f));animation.setOnCheckedChangeListener{_,v->prefs().edit().putBoolean("animations",v).apply()};a.addView(animation);body.addView(a);addGap(22)
+  val animation=Ui.switch(this,prefs().getBoolean("animations",true));val a=Ui.row(this);a.addView(Ui.text(this,"Анимации приложения",15f),LinearLayout.LayoutParams(0,-2,1f));animation.setOnCheckedChangeListener{_,v->prefs().edit().putBoolean("animations",v).apply()};a.addView(animation);body.addView(a);addGap(22)
   val sounds=Ui.switch(this,prefs().getBoolean("sound_buttons",true));val sr=Ui.row(this);sr.addView(Ui.text(this,"Звук нажатий",15f),LinearLayout.LayoutParams(0,-2,1f));sounds.setOnCheckedChangeListener{_,on->prefs().edit().putBoolean("sound_buttons",on).apply()};sr.addView(sounds);body.addView(sr);addGap(13)
   val haptics=Ui.switch(this,prefs().getBoolean("haptic_buttons",true));val hr=Ui.row(this);hr.addView(Ui.text(this,"Лёгкая вибрация нажатий",15f),LinearLayout.LayoutParams(0,-2,1f));haptics.setOnCheckedChangeListener{_,on->prefs().edit().putBoolean("haptic_buttons",on).apply()};hr.addView(haptics);body.addView(hr);addGap(22)
   section("Новые будильники")
@@ -542,13 +557,23 @@ class MainActivity:Activity(){
   snooze.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(parent:android.widget.AdapterView<*>?){};override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){prefs().edit().putInt("default_snooze",snoozes[position]).apply()}}
   val fades=listOf(0,15,30,60,120);val fade=picker(fades,fadeDefault()){if(it==0) "Без нарастания" else "$it сек"};option("НАРАСТАНИЕ ГРОМКОСТИ",fade)
   fade.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(parent:android.widget.AdapterView<*>?){};override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){prefs().edit().putInt("default_fade",fades[position]).apply()}}
+  addGap(7);section("Когда звонит будильник")
+  fun ringSwitch(label:String,key:String,initial:Boolean,description:String){
+   val row=Ui.row(this);val copy=Ui.column(this)
+   copy.addView(Ui.text(this,label,15f,Ui.WHITE,true));copy.addView(Ui.space(this,5));copy.addView(small(description))
+   row.addView(copy,LinearLayout.LayoutParams(0,-2,1f))
+   row.addView(Ui.switch(this,initial).apply{contentDescription=label;setOnCheckedChangeListener{_,value->prefs().edit().putBoolean(key,value).apply()}})
+   body.addView(row);addGap(18)
+  }
+  ringSwitch("Движущаяся кнопка «Отложить»",RingPreferences.MOVING_SNOOZE,RingPreferences.moving(this),"Кнопка перемещается, «Остановить» всегда на месте. При TalkBack и отключённых анимациях движение выключено.")
+  ringSwitch("Отложить кнопкой питания",RingPreferences.POWER_SNOOZE,RingPreferences.power(this),"При выключении экрана сигнал откладывается. Если выключено — звонок продолжается. Android не сообщает приложению, чем именно выключен экран.")
   addGap(7);section("Электрички · Яндекс Расписания")
   val keyReady=railKey().isNotBlank()
   body.addView(small(if(keyReady)"API-ключ сохранён на этом устройстве" else "Для расписания требуется API-ключ"));addGap(9)
   body.addView(Ui.outlineButton(this,if(keyReady)"Изменить или удалить API-ключ" else "Добавить API-ключ") {railKeyPage()});addGap(16)
   if(keyReady){
-   val localCount=RailStationCache.all(this).size
-   body.addView(small(if(localCount>0)"Индекс железнодорожных станций: $localCount" else "Индекс станций создаётся при открытии раздела электричек"));addGap(9)
+   val localCount=RailStationCache.countInMemory()
+   body.addView(small(if(localCount!=null&&localCount>0)"Индекс железнодорожных станций: $localCount" else if(RailStationCache.available(this))"Справочник станций сохранён на устройстве" else "Индекс станций создаётся при открытии раздела электричек"));addGap(9)
    val updateCatalog=Ui.outlineButton(this,if(railCatalogLoading)"Обновление каталога…" else "Обновить каталог станций"){
     railDownloadStations()
    }
@@ -565,6 +590,7 @@ class MainActivity:Activity(){
     try{startActivity(Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",android.net.Uri.parse("package:$packageName")))}catch(_:Exception){Toast.makeText(this,"Открой разрешения DARLY в настройках системы",Toast.LENGTH_LONG).show()}
    });addGap(10)
   }
+  body.addView(small("HyperOS / MIUI: в разрешениях приложения включи показ на экране блокировки и открытие окон из фона. Без этих разрешений система может оставить только уведомление о звонке."));addGap(12)
   body.addView(small("DARLY "+runCatching{packageManager.getPackageInfo(packageName,0).versionName}.getOrNull().orEmpty()))
  }
  private fun themes(){setupScreen("themes","Оформление","Сезоны и собственные фотографии",true)
@@ -665,7 +691,7 @@ class MainActivity:Activity(){
   }
   search.isEnabled=!railLoading
   body.addView(search);addGap(14)
-  val count=RailStationCache.all(this).size
+  val count=if(RailStationCache.available(this))1 else 0
   if(count>0 && railCatalogLoading){body.addView(small("Обновляем справочник станций…"));addGap(9)}
   if(count>0 && railCatalogError!=null){
    body.addView(small("Используется сохранённый каталог: обновление не удалось."));addGap(6)
@@ -705,8 +731,24 @@ class MainActivity:Activity(){
   if(railLoading){body.addView(small("Получаем расписание…"));addGap(12)}
   if(railTrains.isNotEmpty()){
    section("Отправления","${railTrains.size} из $railSearchTotal")
-   railTrains.forEach{train->
-    val card=RailTrainCard.create(this,train){
+   val now=System.currentTimeMillis()
+   val departed=railTrains.filter{!RailDepartureRules.upcoming(it.departureAt,now)}
+   val upcoming=railTrains.filter{RailDepartureRules.upcoming(it.departureAt,now)}
+   if(departed.isNotEmpty()){
+    body.addView(railMini(if(railShowDeparted)"Свернуть ушедшие электрички" else "Развернуть ушедшие электрички · ${departed.size}"){railShowDeparted=!railShowDeparted;railPage()});addGap(12)
+   }
+   if(upcoming.isEmpty()&&!railShowDeparted){body.addView(small("Предстоящих электричек на выбранную дату больше нет."));addGap(12)}
+   (if(railShowDeparted)railTrains else upcoming).forEach{train->
+    val canTrack=RailDepartureRules.upcoming(train.departureAt,now)
+    val track:(()->Unit)?=if(!canTrack)null else ({
+     val from=railFrom;val to=railTo
+     if(from!=null&&to!=null){
+      if(RailTracking.selected(this,train,from,to))RailTracking.clear(this) else RailTracking.track(this,train,from,to,railDate)
+      if(!getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled())Toast.makeText(this,"Разреши уведомления DARLY в настройках телефона",Toast.LENGTH_LONG).show()
+      railPage()
+     }
+    })
+    val card=RailTrainCard.create(this,train,RailTracking.selected(this,train,railFrom,railTo),track){
      val from=railFrom;val to=railTo
      if(from!=null&&to!=null)TrainDetailActivity.open(this,train,from,to,railDate)
     }
@@ -749,8 +791,9 @@ class MainActivity:Activity(){
   railChoosingOrigin=isOrigin
   railPickerQuery=initialQuery
   setupScreen("rail_stations","Выбери станцию",if(isOrigin)"Отправление" else "Прибытие",true)
-  val stations=RailStationCache.all(this)
-  if(stations.isEmpty()){
+  val pickerToken=railPickerEpoch
+  var queryVersion=0
+  if(!RailStationCache.available(this)){
    railCatalogProgress=small(if(railCatalogLoading)"Загружаем железнодорожные станции…" else railCatalogError?:"Подготавливаем каталог…");body.addView(railCatalogProgress);addGap(9)
    if(railCatalogLoading){body.addView(ProgressBar(this).apply{isIndeterminate=true},LinearLayout.LayoutParams(Ui.dp(this,29),Ui.dp(this,29)));addGap(12)}
    if(railCatalogError!=null){body.addView(railMini("Повторить загрузку"){
@@ -762,15 +805,19 @@ class MainActivity:Activity(){
   val results=Ui.column(this)
   body.addView(results);addGap(12)
   fun fill(text:String){
+   val version=++queryVersion
+   railQueryTask?.let{handler.removeCallbacks(it)}
    results.removeAllViews()
-   if(stations.isEmpty()){results.addView(small("Поиск по названию станет доступен после подготовки каталога."));return}
    if(text.trim().length<2){results.addView(small("Введи минимум две буквы."));return}
-   val matches=RailStationCache.find(stations,text,16)
-   if(matches.isEmpty()){results.addView(small("Ничего не найдено."));return}
-   matches.forEach{station->
-    results.addView(railMini(station.label){railStationSelected(station)})
-    results.addView(Ui.space(this,6))
-   }
+   results.addView(small("Ищем станции…"))
+   val task=Runnable{RailStationSearch.search(applicationContext,text){found->
+    if(isDestroyed||isFinishing||screen!="rail_stations"||pickerToken!=railPickerEpoch||version!=queryVersion)return@search
+    results.removeAllViews()
+    if(!found.available){results.addView(small("Поиск по названию станет доступен после подготовки каталога."));RailCatalogLoader.ensure(applicationContext,railKey());return@search}
+    if(found.matches.isEmpty()){results.addView(small("Ничего не найдено."));return@search}
+    found.matches.forEach{station->results.addView(railMini(station.label){railStationSelected(station)});results.addView(Ui.space(this,6))}
+   }}
+   railQueryTask=task;handler.postDelayed(task,120)
   }
   query.addTextChangedListener(object:android.text.TextWatcher{
    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
@@ -806,18 +853,28 @@ class MainActivity:Activity(){
   if(from.code==to.code){Toast.makeText(this,"Выбери разные станции",Toast.LENGTH_SHORT).show();return}
   railLoading=true;railError=null
   val offset=if(append)railNextOffset else 0
-  if(!append){railTrains=emptyList();railSearchTotal=0;railNextOffset=0;railIntervalCount=0}
+  if(!append){railTrains=emptyList();railSearchTotal=0;railNextOffset=0;railIntervalCount=0;railShowDeparted=false}
   val epoch=++railSearchEpoch
   val date=railDate
   railPage()
   Thread({
-   val outcome=runCatching{YandexRaspApi.search(key,from,to,date,offset)}
+   val outcome=runCatching{
+    var response=YandexRaspApi.search(key,from,to,date,offset)
+    val collected=response.trains.toMutableList()
+    var next=offset+50
+    // The API starts at midnight. Skip through past pages before showing today's nearest trains.
+    while(!append&&date==java.time.LocalDate.now().toString()&&next<response.total&&collected.count{it.departureAt>=System.currentTimeMillis()}<10){
+     if(isDestroyed||isFinishing||epoch!=railSearchEpoch)throw java.util.concurrent.CancellationException()
+     response=YandexRaspApi.search(key,from,to,date,next);collected.addAll(response.trains);next+=50
+    }
+    response.copy(trains=collected.distinctBy{it.number to it.departureAt},offset=next-50)
+   }
    runOnUiThread{
     if(isDestroyed || isFinishing || epoch!=railSearchEpoch)return@runOnUiThread
     railLoading=false;railHasSearched=true
     outcome.onSuccess{response->
      railTrains=if(append)(railTrains+response.trains).distinctBy{it.number to it.departureAt} else response.trains
-     railSearchTotal=response.total;railNextOffset=offset+50;railIntervalCount=response.intervalCount
+     railSearchTotal=response.total;railNextOffset=response.offset+50;railIntervalCount=response.intervalCount
     }.onFailure{error->railError=error.localizedMessage?:"Ошибка сети"}
     if(screen=="rail")railPage()
    }

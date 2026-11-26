@@ -55,7 +55,15 @@ class RailSmokeInstrumentation:Instrumentation(){
    fun query(value:String){runOnMainSync{
     val edit=views(activity.window.decorView).filterIsInstance<android.widget.EditText>().first{it.hint?.toString()=="Поиск станции или платформы"}
     edit.setText(value)
-   };waitForIdleSync()}
+   };waitForIdleSync()
+    val until=android.os.SystemClock.elapsedRealtime()+10000
+    var pending=true
+    while(pending&&android.os.SystemClock.elapsedRealtime()<until){
+     runOnMainSync{pending=views(activity.window.decorView).filterIsInstance<android.widget.TextView>().any{it.text.toString()=="Ищем станции…"}}
+     if(pending)Thread.sleep(40)
+    }
+    check(!pending){"Station search did not complete"}
+   }
    click("Электрички");click("Выбрать станцию");query("орел");click(stations[0].label)
    click("Выбрать станцию");query("плат");click(stations[1].label)
    val selection=targetContext.getSharedPreferences("rail_schedules",0)
