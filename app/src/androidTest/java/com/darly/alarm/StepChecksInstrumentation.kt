@@ -30,7 +30,7 @@ class StepChecksInstrumentation:Instrumentation(){
    if(mode=="ui"){check(!StepsService.active&&!StepStore.enabled(targetContext)&&StepStore.ledger(targetContext).days.isEmpty()){"Synthetic checks require QA without activity history"}}
    activity=startActivitySync(Intent().setClassName(targetContext.packageName,MainActivity::class.java.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();click("Активность")
    if(mode=="ui"){prefs.edit().clear().commit();modified=true}
-   ui{check("Челленджи" in texts()&&"За последние 7 дней" in texts()&&"История" in texts()){"Activity sections missing"}}
+   ui{check("Челленджи" in texts()&&"За последние 7 дней" in texts()&&"История" in texts()&&"Твоя прогулка сегодня" in texts()){"Activity sections missing"}}
    if(mode=="permission"||mode=="sensor"){
     if(!StepsService.active){if(mode=="sensor")ui{StepsService.start(activity!!)}else click(if(StepStore.enabled(targetContext))"Продолжить учёт" else "Начать отслеживание")}
     val deadline=android.os.SystemClock.elapsedRealtime()+120000
@@ -48,6 +48,10 @@ class StepChecksInstrumentation:Instrumentation(){
     }
     val notification=targetContext.getSystemService(NotificationManager::class.java).activeNotifications.first{it.id==StepsService.ID}.notification
     check(notification.visibility==Notification.VISIBILITY_PUBLIC)
+    check(notification.smallIcon.resId==R.drawable.ic_walking)
+    check(notification.actions.isNullOrEmpty()&&!notification.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
+    check(notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX)==0&&notification.extras.getCharSequence(Notification.EXTRA_TEXT).isNullOrEmpty())
+    check(notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString().endsWith(" шагов"))
     result.putString("stream","Real hardware counter active, baseline received, foreground step notification present\n")
    }else{
     val today=LocalDate.now().toString();StepStore.setGoal(targetContext,5000);StepStore.enable(targetContext)
@@ -58,8 +62,9 @@ class StepChecksInstrumentation:Instrumentation(){
     ui{check(texts().any{it.contains("Выполнен ✓")}){"Challenge did not complete"}}
     val notification=StepNotification.build(targetContext)
     check(notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString().contains("500"))
-    check(notification.extras.getInt(Notification.EXTRA_PROGRESS)==3500&&notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX)==5000)
-    check(notification.visibility==Notification.VISIBILITY_PUBLIC&&notification.actions.any{it.title=="Пауза"})
+    check(notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX)==0&&notification.extras.getCharSequence(Notification.EXTRA_TEXT).isNullOrEmpty())
+    check(notification.visibility==Notification.VISIBILITY_PUBLIC&&notification.actions.isNullOrEmpty())
+    check(notification.smallIcon.resId==R.drawable.ic_walking)
     check(notification.contentIntent.creatorPackage==targetContext.packageName)
     ui{
      val root=activity!!.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)

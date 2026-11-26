@@ -22,6 +22,8 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
  private val progress=ProgressRing(a)
  private val start=Ui.button(a,""){toggle()}
  private val summary=Ui.text(a,"",15f,Ui.WHITE)
+ private val walking=Ui.text(a,"",18f,Ui.WHITE,true)
+ private val walkingProfile=Ui.text(a,"",12f,Ui.muted)
  private val chart=Ui.row(a).apply{gravity=Gravity.BOTTOM}
  private val history=Ui.column(a)
  private val challenges=linkedMapOf<String,Triple<TextView,ProgressBar,TextView>>()
@@ -31,6 +33,10 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
   row.addView(numbers,LinearLayout.LayoutParams(0,-2,1f));row.addView(progress,LinearLayout.LayoutParams(Ui.dp(a,100),Ui.dp(a,100)))
   hero.addView(row);hero.addView(Ui.space(a,18));hero.addView(status);hero.addView(Ui.space(a,16));hero.addView(start)
   hero.addView(Ui.space(a,10));hero.addView(Ui.outlineButton(a,"Изменить цель"){editGoal()});body.addView(hero);gap()
+  val movement=Ui.card(a)
+  movement.addView(Ui.text(a,"Твоя прогулка сегодня",20f,Ui.WHITE,true));movement.addView(Ui.space(a,16))
+  movement.addView(walking);movement.addView(Ui.space(a,14));movement.addView(walkingProfile);movement.addView(Ui.space(a,14))
+  movement.addView(Ui.outlineButton(a,"Настроить расчёт"){editWalkingProfile()});body.addView(movement);gap()
   body.addView(Ui.text(a,"За последние 7 дней",21f,Ui.WHITE,true));body.addView(Ui.space(a,12))
   val analytics=Ui.card(a);analytics.addView(chart,LinearLayout.LayoutParams(-1,Ui.dp(a,142)));analytics.addView(Ui.space(a,18));analytics.addView(summary);body.addView(analytics);gap()
   body.addView(Ui.text(a,"Челленджи",21f,Ui.WHITE,true));body.addView(Ui.space(a,8))
@@ -57,6 +63,30 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
   refresh()
  }
  private fun gap(){body.addView(Ui.space(a,24))}
+ private fun editWalkingProfile(){
+  val fields=Ui.column(a).apply{setPadding(Ui.dp(a,24),0,Ui.dp(a,24),0)}
+  fun field(label:String,value:Int):EditText{
+   fields.addView(TextView(a).apply{text=label})
+   return EditText(a).apply{inputType=InputType.TYPE_CLASS_NUMBER;setText(value.toString());fields.addView(this)}
+  }
+  val stride=field("Длина одного шага, см (20–150)",StepStore.strideCm(a))
+  val weight=field("Вес, кг (20–300)",StepStore.weightKg(a))
+  val dialog=AlertDialog.Builder(a).setTitle("Расчёт прогулки").setMessage("Измерь обычный шаг или оставь 70 см. Вес нужен для оценки калорий. Изменения пересчитают оценки для всей сохранённой истории.")
+   .setView(fields).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",null).create()
+  dialog.setOnShowListener{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+   val s=stride.text.toString().toIntOrNull();val w=weight.text.toString().toIntOrNull()
+   if(s==null||s !in 20..150){stride.error="От 20 до 150 см";return@setOnClickListener}
+   if(w==null||w !in 20..300){weight.error="От 20 до 300 кг";return@setOnClickListener}
+   StepStore.setWalkingProfile(a,s,w);refresh();dialog.dismiss()
+  }};dialog.show()
+ }
+ private fun distance(meters:Double):String=if(meters<1000)"${format.format(kotlin.math.round(meters).toLong())} м" else String.format(Locale("ru"),"%.2f км · %s м",meters/1000,format.format(kotlin.math.round(meters).toLong()))
+ private fun duration(minutes:Double):String{
+  if(minutes==0.0)return "0 мин"
+  if(minutes<1)return "меньше минуты"
+  val n=kotlin.math.round(minutes).toLong()
+  return if(n<60)"$n мин" else "${n/60} ч ${n%60} мин"
+ }
  private fun editGoal(){
   val input=EditText(a).apply{inputType=InputType.TYPE_CLASS_NUMBER;setText(StepStore.goal(a).toString());selectAll()}
   val dialog=AlertDialog.Builder(a).setTitle("Цель шагов на день").setMessage("От 100 до 100 000 шагов. Цель прошлых дней не меняется.").setView(input).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",null).create()
@@ -69,6 +99,11 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
  fun refresh(){
   val today=LocalDate.now();val ledger=StepStore.ledger(a);val days=ledger.days;val steps=days.firstOrNull{it.date==today.toString()}?.steps?:0
   val goal=StepStore.goal(a);total.text=format.format(steps);goalLabel.text="из ${format.format(goal)} · цель на день";progress.set(steps,goal)
+  val stride=StepStore.strideCm(a);val weight=StepStore.weightKg(a)
+  val estimate=WalkingEstimates.calculate(steps,stride,weight)
+  val all=WalkingEstimates.calculate(days.sumOf{it.steps},stride,weight)
+  walking.text="≈ ${distance(estimate.meters)}\n≈ ${format.format(kotlin.math.round(estimate.activeKcal).toLong())} ккал активности\n≈ ${duration(estimate.minutes)} ходьбы\n\nЗа всю сохранённую историю\n≈ ${distance(all.meters)}"
+  walkingProfile.text="Оценка: шаг $stride см, вес $weight кг, ходьба 4 км/ч. Время рассчитано по расстоянию; калории — сверх расхода в покое. История — до 366 дней."
   start.text=if(StepsService.active)"Приостановить учёт" else if(StepStore.enabled(a))"Продолжить учёт" else "Начать отслеживание"
   start.isEnabled=StepsService.sensor(a)!=null
   status.text=when{
