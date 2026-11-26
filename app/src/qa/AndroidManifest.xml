@@ -6,4 +6,6 @@
         android:targetPackage="com.darly.alarm.qa" android:label="DARLY wake experience checks" />
     <instrumentation android:name="com.darly.alarm.RailTrackingInstrumentation"
         android:targetPackage="com.darly.alarm.qa" android:label="DARLY rail tracking checks" />
+    <instrumentation android:name="com.darly.alarm.StepChecksInstrumentation"
+        android:targetPackage="com.darly.alarm.qa" android:label="DARLY activity checks" />
 </manifest>

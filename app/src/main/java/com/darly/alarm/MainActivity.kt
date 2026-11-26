@@ -22,6 +22,7 @@ import java.util.*
 
 class MainActivity:Activity(){
  private lateinit var body:LinearLayout
+ private var activityDashboard:ActivityDashboard?=null
  private var screen="home"
  private var railFrom:YandexRaspApi.Station?=null
  private var railTo:YandexRaspApi.Station?=null
@@ -85,6 +86,7 @@ class MainActivity:Activity(){
  }}
  private val refresh=Runnable{when(screen){"home"->home();"timers"->timersPage()}}
  private val changes=object:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){
+  if(intent.action==StepStore.ACTION_CHANGED){if(screen=="activity")activityDashboard?.refresh();return}
     if(intent.action==RailCatalogLoader.ACTION_CHANGED){
    if(railCatalogLoading){railCatalogProgress?.text="Загружено: ${RailCatalogLoader.state.bytes/1024/1024} МБ данных…";return}
    when(screen){"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery);"settings"->settings()}
@@ -96,7 +98,7 @@ class MainActivity:Activity(){
  private var registered=false
  /** On Android 13+ app-only events must be registered as non-exported. */
  private fun registerChangesReceiver(){
-  val filter=IntentFilter(AlarmStore.ACTION_CHANGED).apply{addAction(RailCatalogLoader.ACTION_CHANGED)}
+  val filter=IntentFilter(AlarmStore.ACTION_CHANGED).apply{addAction(RailCatalogLoader.ACTION_CHANGED);addAction(StepStore.ACTION_CHANGED)}
   if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.TIRAMISU){
    registerReceiver(changes,filter,Context.RECEIVER_NOT_EXPORTED)
   }else{
@@ -130,9 +132,10 @@ class MainActivity:Activity(){
   RailTracking.sync(this)
   if(RingService.active(this))openCurrentScreen()
   else if(intent.getStringExtra("open_tools")=="timers")timersPage()
+  else if(intent.getBooleanExtra("open_activity",false))activityPage()
   else when(savedInstanceState?.getString("screen")){
    "rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery)
-   "settings"->settings();"presets"->presets();"timers"->timersPage();"stopwatch"->stopwatchPage()
+   "settings"->settings();"presets"->presets();"timers"->timersPage();"stopwatch"->stopwatchPage();"activity"->activityPage()
    else->home()
   }
  }
@@ -150,13 +153,14 @@ class MainActivity:Activity(){
   store("from",railFrom);store("to",railTo);edit.apply()
  }
  override fun onResume(){super.onResume();showing=true
+  StepsService.restore(this)
   if(!registered)registerChangesReceiver()
   handler.removeCallbacks(clockTick);handler.removeCallbacks(refresh);handler.removeCallbacks(toolsTick)
   val allowed=Build.VERSION.SDK_INT<31 || getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
   if(allowed && lastPermission!=true){AlarmStore.reschedule(this);TimerStore.restore(this)}
   lastPermission=allowed
   if(RingService.active(this))openCurrentScreen()else when(screen){
-   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage();"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery);"rail_key"->railKeyPage()
+   "home"->home();"timers"->timersPage();"stopwatch"->stopwatchPage();"rail"->railPage();"rail_stations"->railStationPicker(railChoosingOrigin,railPickerQuery);"rail_key"->railKeyPage();"activity"->activityPage()
   }
   NextAlarmNotifier.sync(this)
  }
@@ -182,10 +186,24 @@ class MainActivity:Activity(){
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent)
   setIntent(intent)
   if(intent.getStringExtra("open_tools")=="timers")timersPage()
+  if(intent.getBooleanExtra("open_activity",false))activityPage()
  }
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray){
   super.onRequestPermissionsResult(requestCode,permissions,grantResults)
   if(requestCode==3)NextAlarmNotifier.sync(this)
+  if(requestCode==51){
+   if(StepsService.allowed(this))startStepTracking() else {Toast.makeText(this,"Без разрешения шаги не считаются. Доступ можно включить в настройках приложения.",Toast.LENGTH_LONG).show();activityDashboard?.refresh()}
+  }
+  if(requestCode==52)activityDashboard?.refresh()
+ }
+ private fun activityPage(){setupScreen("activity","Активность","Твои шаги, прогресс и маленькие победы");activityDashboard=ActivityDashboard(this,body){
+  if(StepsService.active){StepStore.pause(this);stopService(Intent(this,StepsService::class.java));activityDashboard?.refresh()}
+  else if(!StepsService.allowed(this)&&Build.VERSION.SDK_INT>=29)requestPermissions(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION),51)
+  else startStepTracking()
+ }}
+ private fun startStepTracking(){
+  StepsService.start(this);activityDashboard?.refresh()
+  if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),52)
  }
  private fun chooseWallpaper(){
   startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),28)
@@ -229,6 +247,7 @@ class MainActivity:Activity(){
  }
  private fun chooseSound(){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*"),17)}
  private fun setupScreen(which:String,title:String,subtitle:String="",back:Boolean=false){
+  if(which!="activity")activityDashboard=null
   railPickerEpoch++;railQueryTask?.let{handler.removeCallbacks(it)};railQueryTask=null
   val from=screen
   if(from=="home" && which!="home")resetSelection()
@@ -280,11 +299,11 @@ class MainActivity:Activity(){
 
   }
   body.addView(bar);body.addView(Ui.space(this,24))
-  if(which=="home"||which=="presets"||which=="rail"||which=="settings")frame.addView(bottomNavigation(which))
+  if(which in listOf("home","presets","activity","rail","settings"))frame.addView(bottomNavigation(which))
   // No overlapping full-screen roots: they caused moving nav bars and jumpy status insets.
   // Animate only opacity of the incoming content; the wallpaper never translates.
   setContentView(root)
-  val tabs=listOf("home","presets","rail","settings")
+  val tabs=listOf("home","presets","activity","rail","settings")
   if(from!=which && from in tabs && which in tabs && prefs().getBoolean("animations",true)){
    scroll.alpha=0f
    scroll.animate().alpha(1f).setDuration(260L)
@@ -294,14 +313,14 @@ class MainActivity:Activity(){
  // Horizontal swipes switch between primary sections, without disrupting vertical scrolls.
  override fun dispatchTouchEvent(ev:MotionEvent):Boolean{
   if(ev.actionMasked==MotionEvent.ACTION_DOWN){tabSwipeX=ev.x;tabSwipeY=ev.y}
-  if(ev.actionMasked==MotionEvent.ACTION_UP&&screen in listOf("home","presets","rail","settings")){
+  if(ev.actionMasked==MotionEvent.ACTION_UP&&screen in listOf("home","presets","activity","rail","settings")){
    val dx=ev.x-tabSwipeX;val dy=ev.y-tabSwipeY
    if(kotlin.math.abs(dx)>Ui.dp(this,115)&&kotlin.math.abs(dy)<Ui.dp(this,85)){
     val cancel=MotionEvent.obtain(ev);cancel.action=MotionEvent.ACTION_CANCEL
     super.dispatchTouchEvent(cancel);cancel.recycle()
-    val list=listOf("home","presets","rail","settings");val index=list.indexOf(screen)
+    val list=listOf("home","presets","activity","rail","settings");val index=list.indexOf(screen)
     val target=(index+if(dx<0)1 else -1).coerceIn(0,list.lastIndex)
-    if(target!=index)when(target){0->home();1->presets();2->railPage();3->settings()}
+    if(target!=index)when(target){0->home();1->presets();2->activityPage();3->railPage();4->settings()}
     return true
    }
   }
@@ -313,7 +332,7 @@ class MainActivity:Activity(){
    setPadding(Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6),Ui.dp(this@MainActivity,6))
    layoutParams=LinearLayout.LayoutParams(-1,-2).apply{setMargins(Ui.dp(this@MainActivity,14),0,Ui.dp(this@MainActivity,14),Ui.dp(this@MainActivity,10))}
   }
-  listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("rail",R.drawable.ic_rail_nav,"Электрички"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
+  listOf(Triple("home",R.drawable.ic_alarm_nav,"Будильники"),Triple("presets",R.drawable.ic_presets_nav,"Пресеты"),Triple("activity",R.drawable.ic_activity_nav,"Активность"),Triple("rail",R.drawable.ic_rail_nav,"Электрички"),Triple("settings",R.drawable.ic_settings_nav,"Настройки")).forEach{(key,iconId,label)->
    val item=Ui.column(this).apply{gravity=Gravity.CENTER;contentDescription=label;isSelected=key==active
     if(key==active)background=Ui.shape((0x24 shl 24) or (Ui.blue and 0xffffff),Ui.dp(this@MainActivity,21).toFloat())
    }
@@ -324,8 +343,8 @@ class MainActivity:Activity(){
     contentDescription=null
    }
    item.addView(icon,LinearLayout.LayoutParams(Ui.dp(this,24),Ui.dp(this,24)))
-   item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,11f,if(key==active)Ui.blue else Ui.muted,key==active).apply{gravity=Gravity.CENTER})
-   Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();"rail"->railPage();else->settings()}}
+   item.addView(Ui.space(this,5));item.addView(Ui.text(this,label,10f,if(key==active)Ui.blue else Ui.muted,key==active).apply{gravity=Gravity.CENTER})
+   Ui.interactive(this,item){when(key){"home"->home();"presets"->presets();"activity"->activityPage();"rail"->railPage();else->settings()}}
    nav.addView(item,LinearLayout.LayoutParams(0,Ui.dp(this,64),1f))
   }
   return nav
