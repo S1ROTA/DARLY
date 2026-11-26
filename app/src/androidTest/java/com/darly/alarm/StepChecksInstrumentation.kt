@@ -17,6 +17,8 @@ class StepChecksInstrumentation:Instrumentation(){
   if(!targetContext.packageName.endsWith(".qa")){finish(code,result);return}
   val prefs=targetContext.getSharedPreferences("activity_steps",0);val backup=prefs.all
   var modified=false
+  var profileModified=false
+  val profileKeys=setOf("weight_kg","height_cm","age","stride_cm")
   var activity:Activity?=null
   fun ui(action:()->Unit){var problem:Throwable?=null;runOnMainSync{try{action()}catch(e:Throwable){problem=e}};problem?.let{throw it}}
   fun views(v:View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{views(v.getChildAt(it))}else emptyList()
@@ -31,7 +33,25 @@ class StepChecksInstrumentation:Instrumentation(){
    activity=startActivitySync(Intent().setClassName(targetContext.packageName,MainActivity::class.java.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();click("Активность")
    if(mode=="ui"){prefs.edit().clear().commit();modified=true}
    ui{check("Челленджи" in texts()&&"За последние 7 дней" in texts()&&"История" in texts()&&"Твоя прогулка сегодня" in texts()){"Activity sections missing"}}
-   if(mode=="permission"||mode=="sensor"){
+   if(mode=="profile"){
+    check(android.os.Build.VERSION.SDK_INT>=29)
+    check(StepStore.walkingProfile(targetContext)==null){"Profile check requires an incomplete QA profile"}
+    ui{check(texts().none{it.contains("ккал активности")}){"Estimates shown before profile"}}
+    click("Указать данные")
+    fun dialogNodes()=android.view.inspector.WindowInspector.getGlobalWindowViews().filter{it.context.packageName==targetContext.packageName}.flatMap{views(it)}
+    ui{
+     val save=dialogNodes().filterIsInstance<Button>().first{it.text.toString()=="Сохранить"}
+     save.performClick();check(StepStore.walkingProfile(targetContext)==null){"Empty profile accepted"}
+     val fields=dialogNodes().filterIsInstance<EditText>()
+     fields.first{it.contentDescription.toString().startsWith("Вес,")}.setText("75")
+     fields.first{it.contentDescription.toString().startsWith("Рост,")}.setText("180")
+     fields.first{it.contentDescription.toString().startsWith("Возраст,")}.setText("30")
+     profileModified=true;save.performClick()
+     check(StepStore.walkingProfile(targetContext)==WalkingProfile(75,180,30,72)){"Profile was not saved correctly"}
+     check(texts().any{it.contains("ккал активности")}){"Estimates missing after profile"}
+    }
+    result.putString("stream","Profile gate, required fields, saving, height-based step length and estimates passed; original profile restored\n")
+   }else if(mode=="permission"||mode=="sensor"){
     if(!StepsService.active){if(mode=="sensor")ui{StepsService.start(activity!!)}else click(if(StepStore.enabled(targetContext))"Продолжить учёт" else "Начать отслеживание")}
     val deadline=android.os.SystemClock.elapsedRealtime()+120000
     while(!StepsService.active&&android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(200)
@@ -57,7 +77,7 @@ class StepChecksInstrumentation:Instrumentation(){
     check(notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX)==0&&notification.extras.getCharSequence(Notification.EXTRA_TEXT).isNullOrEmpty())
     check(notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString().endsWith(" шагов"))
     ui{
-     check(texts().any{it.contains("ккал активности")&&it.contains("ходьбы")&&it.contains("За всю сохранённую историю")}){"Walking estimates missing"}
+     check(if(StepStore.walkingProfile(targetContext)==null)texts().any{it=="Расчёты появятся после заполнения данных"}else texts().any{it.contains("ккал активности")&&it.contains("ходьбы")&&it.contains("За всю сохранённую историю")}){"Walking profile gate or estimates missing"}
      val root=activity!!.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
      val cardTitle=views(root).filterIsInstance<TextView>().first{it.text.toString()=="Твоя прогулка сегодня"}
      val scroll=views(root).filterIsInstance<ScrollView>().first()
@@ -92,7 +112,8 @@ class StepChecksInstrumentation:Instrumentation(){
    }
    code=Activity.RESULT_OK
   }catch(e:Throwable){result.putString("stream","FAILED ($mode): ${e.message}\n")}
-  finally{if(modified){
+  finally{if(profileModified){val edit=prefs.edit();profileKeys.forEach{k->edit.remove(k);(backup[k] as? Int)?.let{edit.putInt(k,it)}};edit.commit()}
+   if(modified){
    targetContext.stopService(Intent(targetContext,StepsService::class.java))
    val editor=prefs.edit().clear()
    backup.forEach{(k,v)->when(v){is String->editor.putString(k,v);is Boolean->editor.putBoolean(k,v);is Int->editor.putInt(k,v);is Long->editor.putLong(k,v);is Float->editor.putFloat(k,v)}}

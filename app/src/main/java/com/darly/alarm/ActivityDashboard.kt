@@ -27,7 +27,13 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
  private val chart=Ui.row(a).apply{gravity=Gravity.BOTTOM}
  private val history=Ui.column(a)
  private val challenges=linkedMapOf<String,Triple<TextView,ProgressBar,TextView>>()
+ private var profilePrompt:View?=null
  init{
+  if(StepStore.walkingProfile(a)==null){
+   val prompt=Ui.card(a);prompt.addView(Ui.text(a,"Сначала познакомимся",22f,Ui.WHITE,true));prompt.addView(Ui.space(a,12))
+   prompt.addView(Ui.text(a,"Укажи вес, рост и возраст. После этого появятся расчёты расстояния, калорий и времени ходьбы. Шаги уже доступны.",14f,Ui.muted));prompt.addView(Ui.space(a,16))
+   prompt.addView(Ui.button(a,"Указать данные"){editWalkingProfile()});body.addView(prompt);profilePrompt=prompt;gap()
+  }
   val hero=Ui.card(a);val row=Ui.row(a);val numbers=Ui.column(a)
   numbers.addView(Ui.text(a,"ШАГОВ СЕГОДНЯ",11f,Ui.muted,true));numbers.addView(Ui.space(a,10));numbers.addView(total);numbers.addView(Ui.space(a,7));numbers.addView(goalLabel)
   row.addView(numbers,LinearLayout.LayoutParams(0,-2,1f));row.addView(progress,LinearLayout.LayoutParams(Ui.dp(a,100),Ui.dp(a,100)))
@@ -65,19 +71,27 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
  private fun gap(){body.addView(Ui.space(a,24))}
  private fun editWalkingProfile(){
   val fields=Ui.column(a).apply{setPadding(Ui.dp(a,24),0,Ui.dp(a,24),0)}
-  fun field(label:String,value:Int):EditText{
+  fun field(label:String,value:Int?):EditText{
    fields.addView(TextView(a).apply{text=label})
-   return EditText(a).apply{inputType=InputType.TYPE_CLASS_NUMBER;setText(value.toString());fields.addView(this)}
+   return EditText(a).apply{inputType=InputType.TYPE_CLASS_NUMBER;contentDescription=label;value?.let{setText(it.toString())};fields.addView(this)}
   }
-  val stride=field("Длина одного шага, см (20–150)",StepStore.strideCm(a))
-  val weight=field("Вес, кг (20–300)",StepStore.weightKg(a))
-  val dialog=AlertDialog.Builder(a).setTitle("Расчёт прогулки").setMessage("Измерь обычный шаг или оставь 70 см. Вес нужен для оценки калорий. Изменения пересчитают оценки для всей сохранённой истории.")
-   .setView(fields).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",null).create()
+  val profile=StepStore.walkingProfile(a)
+  val weight=field("Вес, кг (20–300)",profile?.weightKg)
+  val height=field("Рост, см (80–250)",profile?.heightCm)
+  val age=field("Возраст, лет (6–120)",profile?.age)
+  val stride=field("Длина шага, см (необязательно, 20–150)",profile?.strideCm)
+  stride.hint="Оценить по росту"
+  val container=ScrollView(a).apply{addView(fields)}
+  val dialog=AlertDialog.Builder(a).setTitle("Данные для расчётов").setMessage("Рост поможет оценить длину шага, вес — калории. Возраст сохранится в профиле. Данные остаются на телефоне. Изменения пересчитают оценки истории.")
+   .setView(container).setNegativeButton("Позже",null).setPositiveButton("Сохранить",null).create()
   dialog.setOnShowListener{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
-   val s=stride.text.toString().toIntOrNull();val w=weight.text.toString().toIntOrNull()
-   if(s==null||s !in 20..150){stride.error="От 20 до 150 см";return@setOnClickListener}
+   val w=weight.text.toString().toIntOrNull();val h=height.text.toString().toIntOrNull();val years=age.text.toString().toIntOrNull()
    if(w==null||w !in 20..300){weight.error="От 20 до 300 кг";return@setOnClickListener}
-   StepStore.setWalkingProfile(a,s,w);refresh();dialog.dismiss()
+   if(h==null||h !in 80..250){height.error="От 80 до 250 см";return@setOnClickListener}
+   if(years==null||years !in 6..120){age.error="От 6 до 120 лет";return@setOnClickListener}
+   val s=if(stride.text.isBlank())WalkingProfile.initialStride(h)else stride.text.toString().toIntOrNull()
+   if(s==null||s !in 20..150){stride.error="От 20 до 150 см";return@setOnClickListener}
+   StepStore.setWalkingProfile(a,WalkingProfile(w,h,years,s));refresh();dialog.dismiss()
   }};dialog.show()
  }
  private fun distance(meters:Double):String=if(meters<1000)"${format.format(kotlin.math.round(meters).toLong())} м" else String.format(Locale("ru"),"%.2f км · %s м",meters/1000,format.format(kotlin.math.round(meters).toLong()))
@@ -99,11 +113,18 @@ class ActivityDashboard(private val a:Activity,private val body:LinearLayout,pri
  fun refresh(){
   val today=LocalDate.now();val ledger=StepStore.ledger(a);val days=ledger.days;val steps=days.firstOrNull{it.date==today.toString()}?.steps?:0
   val goal=StepStore.goal(a);total.text=format.format(steps);goalLabel.text="из ${format.format(goal)} · цель на день";progress.set(steps,goal)
-  val stride=StepStore.strideCm(a);val weight=StepStore.weightKg(a)
+  val profile=StepStore.walkingProfile(a)
+  if(profile==null){
+   walking.text="Расчёты появятся после заполнения данных"
+   walkingProfile.text="Нужны вес, рост и возраст. Можно заполнить сейчас или позже — шаги сохраняются."
+  }else{
+  profilePrompt?.visibility=View.GONE
+  val stride=profile.strideCm;val weight=profile.weightKg
   val estimate=WalkingEstimates.calculate(steps,stride,weight)
   val all=WalkingEstimates.calculate(days.sumOf{it.steps},stride,weight)
   walking.text="≈ ${distance(estimate.meters)}\n≈ ${format.format(kotlin.math.round(estimate.activeKcal).toLong())} ккал активности\n≈ ${duration(estimate.minutes)} ходьбы\n\nЗа всю сохранённую историю\n≈ ${distance(all.meters)}"
-  walkingProfile.text="Оценка: шаг $stride см, вес $weight кг, ходьба 4 км/ч. Время рассчитано по расстоянию; калории — сверх расхода в покое. История — до 366 дней."
+  walkingProfile.text="Профиль: $weight кг · ${profile.heightCm} см · ${profile.age} лет.\nОценка: шаг $stride см (начальная оценка — 40% роста), ходьба 4 км/ч. Время и калории приблизительные; возраст в формулу не входит. История — до 366 дней."
+  }
   start.text=if(StepsService.active)"Приостановить учёт" else if(StepStore.enabled(a))"Продолжить учёт" else "Начать отслеживание"
   start.isEnabled=StepsService.sensor(a)!=null
   status.text=when{

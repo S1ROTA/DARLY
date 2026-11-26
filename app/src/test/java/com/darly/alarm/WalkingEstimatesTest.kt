@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WalkingEstimatesTest {
+ @Test fun profileRequiresCompleteValidDetails(){
+  assertEquals(72,WalkingProfile.initialStride(180))
+  assertEquals(75,WalkingProfile(75,180,30,72).weightKg)
+  for(profile in listOf(listOf(0,180,30,72),listOf(75,0,30,72),listOf(75,180,0,72),listOf(75,180,30,0))){
+   try{WalkingProfile(profile[0],profile[1],profile[2],profile[3]);fail("Incomplete profile accepted")}catch(_:IllegalArgumentException){}
+  }
+ }
  @Test fun zeroAndNegativeStepsDoNotCreateActivity(){
   for(steps in listOf(0L,-1L))assertEquals(WalkingEstimate(0.0,0.0,0.0),WalkingEstimates.calculate(steps,70,70))
  }

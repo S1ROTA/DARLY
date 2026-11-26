@@ -11,11 +11,13 @@ object StepStore {
  private fun prefs(c:Context)=c.getSharedPreferences("activity_steps",0)
  fun enabled(c:Context)=prefs(c).getBoolean("enabled",false)
  fun goal(c:Context)=prefs(c).getInt("goal",8000).coerceIn(100,100000)
- fun strideCm(c:Context)=prefs(c).getInt("stride_cm",70).coerceIn(20,150)
- fun weightKg(c:Context)=prefs(c).getInt("weight_kg",70).coerceIn(20,300)
- fun setWalkingProfile(c:Context,strideCm:Int,weightKg:Int){
-  require(strideCm in 20..150 && weightKg in 20..300)
-  prefs(c).edit().putInt("stride_cm",strideCm).putInt("weight_kg",weightKg).apply();changed(c)
+ fun walkingProfile(c:Context):WalkingProfile?=runCatching{
+  val p=prefs(c)
+  WalkingProfile(p.getInt("weight_kg",0),p.getInt("height_cm",0),p.getInt("age",0),p.getInt("stride_cm",0))
+ }.getOrNull()
+ fun setWalkingProfile(c:Context,profile:WalkingProfile){
+  prefs(c).edit().putInt("stride_cm",profile.strideCm).putInt("weight_kg",profile.weightKg)
+   .putInt("height_cm",profile.heightCm).putInt("age",profile.age).apply();changed(c)
  }
  fun error(c:Context)=prefs(c).getString("error",null)
  fun setError(c:Context,message:String?){prefs(c).edit().putString("error",message).apply();changed(c)}
