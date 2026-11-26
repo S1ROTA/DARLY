@@ -46,12 +46,28 @@ class StepChecksInstrumentation:Instrumentation(){
      val actual=StepStore.ledger(targetContext).days.firstOrNull{it.date==LocalDate.now().toString()}?.steps?:0
      check(actual>0){"No physical steps detected yet"};result.putLong("actual_steps_today",actual)
     }
-    val notification=targetContext.getSystemService(NotificationManager::class.java).activeNotifications.first{it.id==StepsService.ID}.notification
+    val manager=targetContext.getSystemService(NotificationManager::class.java)
+    val notificationDeadline=android.os.SystemClock.elapsedRealtime()+10000
+    var posted=manager.activeNotifications.firstOrNull{it.id==StepsService.ID}
+    while(posted==null&&android.os.SystemClock.elapsedRealtime()<notificationDeadline){Thread.sleep(100);posted=manager.activeNotifications.firstOrNull{it.id==StepsService.ID}}
+    val notification=checkNotNull(posted){"Step notification was not posted"}.notification
     check(notification.visibility==Notification.VISIBILITY_PUBLIC)
     check(notification.smallIcon.resId==R.drawable.ic_walking)
     check(notification.actions.isNullOrEmpty()&&!notification.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
     check(notification.extras.getInt(Notification.EXTRA_PROGRESS_MAX)==0&&notification.extras.getCharSequence(Notification.EXTRA_TEXT).isNullOrEmpty())
     check(notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString().endsWith(" шагов"))
+    ui{
+     check(texts().any{it.contains("ккал активности")&&it.contains("ходьбы")&&it.contains("За всю сохранённую историю")}){"Walking estimates missing"}
+     val root=activity!!.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
+     val cardTitle=views(root).filterIsInstance<TextView>().first{it.text.toString()=="Твоя прогулка сегодня"}
+     val scroll=views(root).filterIsInstance<ScrollView>().first()
+     val rect=android.graphics.Rect();cardTitle.getDrawingRect(rect);scroll.offsetDescendantRectToMyCoords(cardTitle,rect);scroll.scrollTo(0,rect.top-Ui.dp(targetContext,12));scroll.alpha=1f
+    };waitForIdleSync()
+    ui{
+     val root=activity!!.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
+     val bitmap=Bitmap.createBitmap(root.width,root.height,Bitmap.Config.ARGB_8888);root.draw(Canvas(bitmap))
+     java.io.File(targetContext.filesDir,"qa-walking-3.5.1.png").outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+    }
     result.putString("stream","Real hardware counter active, baseline received, foreground step notification present\n")
    }else{
     val today=LocalDate.now().toString();StepStore.setGoal(targetContext,5000);StepStore.enable(targetContext)
