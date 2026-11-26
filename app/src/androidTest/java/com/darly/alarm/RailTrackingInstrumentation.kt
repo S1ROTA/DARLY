@@ -64,6 +64,7 @@ class RailTrackingInstrumentation:Instrumentation(){
    val manager=targetContext.getSystemService(NotificationManager::class.java)
    val notification=manager.activeNotifications.first{it.id==9092}.notification
    check(notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString()=="Москва → Мытищи")
+   check(notification.visibility==Notification.VISIBILITY_PUBLIC){"Tracked route is hidden on lock screen"}
    check(notification.actions.any{it.title=="Не отслеживать"})
    ui{check("✓ Отслеживается · отменить" in texts())}
    Thread.sleep(800)

@@ -26,7 +26,7 @@ object RailTracking {
   if(now>=expires){clear(c);return}
   val manager=c.getSystemService(NotificationManager::class.java)
   if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)return
-  manager.createNotificationChannel(NotificationChannel("rail_tracking_v1","Отслеживаемая электричка",NotificationManager.IMPORTANCE_LOW))
+  manager.createNotificationChannel(NotificationChannel("rail_tracking_v1","Отслеживаемая электричка",NotificationManager.IMPORTANCE_LOW).apply{lockscreenVisibility=Notification.VISIBILITY_PUBLIC})
   val storedFares=j.optJSONArray("fares")
   val fares=if(storedFares==null)emptyList()else (0 until storedFares.length()).mapNotNull{index->storedFares.optJSONObject(index)?.let{RailFare(it.optString("name"),it.optString("currency"),it.optLong("minor"))}}
   val train=YandexRaspApi.Train(j.optString("number"),j.optString("title"),j.optString("departureText"),j.optString("arrival").takeUnless{it.isBlank()||it=="null"},departure,j.optInt("duration"),uid=j.optString("uid"),fares=fares)
@@ -34,7 +34,7 @@ object RailTracking {
   val click=PendingIntent.getActivity(c,ID,open,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   val status=if(now<departure)"До отправления" else if(now<arrival)"До прибытия по расписанию" else "Рейс прибыл по расписанию"
   val details="№ ${train.number} · ${train.labelTime} → ${train.arrivalTime} · $status"
-  val notification=Notification.Builder(c,"rail_tracking_v1").setSmallIcon(R.drawable.ic_rail_nav).setContentTitle("${j.getString("from")} → ${j.getString("to")}").setContentText(details).setStyle(Notification.BigTextStyle().bigText(details+"\nДанные расписания; положение поезда не отслеживается.")).setContentIntent(click).setOngoing(true).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PRIVATE).setCategory(Notification.CATEGORY_STATUS).addAction(android.R.drawable.ic_menu_close_clear_cancel,"Не отслеживать",pending(c,"CLEAR"))
+  val notification=Notification.Builder(c,"rail_tracking_v1").setSmallIcon(R.drawable.ic_rail_nav).setContentTitle("${j.getString("from")} → ${j.getString("to")}").setContentText(details).setStyle(Notification.BigTextStyle().bigText(details+"\nДанные расписания; положение поезда не отслеживается.")).setContentIntent(click).setOngoing(true).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PUBLIC).setCategory(Notification.CATEGORY_STATUS).addAction(android.R.drawable.ic_menu_close_clear_cancel,"Не отслеживать",pending(c,"CLEAR"))
   if(now<arrival)notification.setWhen(if(now<departure)departure else arrival).setUsesChronometer(true).setChronometerCountDown(true)
   manager.notify(ID,notification.build())
   c.getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,if(now<departure)departure else if(now<arrival)arrival else expires,pending(c,"REFRESH"))
